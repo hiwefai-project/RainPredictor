@@ -1,8 +1,12 @@
-numpy
 torch
+torchvision
+numpy
+pillow
 rasterio
 scikit-image
 scikit-learn
-torchvision
-pytorch_msssim
-thop
+torchio
+pytorch-msssim
+einops
+tensorboard
+tqdm
