@@ -4,6 +4,8 @@
 ## Overview
 RainPredictor is an advanced deep learning system for radar-based precipitation nowcasting, combining a U-Net encoder/decoder architecture with a temporal Transformer. The model processes sequences of radar reflectivity images (TIFF format) to predict future precipitation patterns.
 
+RainPredictor has been developed with the framework of the Hi-WeFAI cascade funding project ([https://hiwefai-project.org](https://hiwefai-project.org), “National Center ICSC; National Center for HPC, Big Data and Quantum Computing; Cascade Call; Spoke 9 Digital Society & Smart City; CUP E63C22000980007; IDENTIFICATION CODE CN\_00000013).
+
 ### Key Features
 - **Advanced Architecture**: 
   - U-Net encoder/decoder for robust spatial feature extraction
