@@ -15,9 +15,9 @@ nowcasting model (`RainPredRNN`) composed of:
 
 ## 1. Data layout
 
-The code assumes that you have the entire dataset (provided its directory substructure) in a single folder (ex dataset)
+The code assumes that you have the entire dataset (provided its directory substructure) in a single folder (ex, dataset)
 
-Let's run the script to reorganize the dataset into 3 sub-datasets:
+Let's run the script to reorganize the dataset into three sub-datasets:
 1) Training set - 90% of the entire dataset
 2) Validation set - 9% of the entire dataset
 3) Test set - 1% of the entire dataset
@@ -60,8 +60,8 @@ in each split and builds sliding temporal windows over them.
 
 Default paths in `rainpred/config.py` are:
 
-- `DATA_PATH = "/home/v.bucciero/data/instruments/rdr0_splits/"`
-- `VAL_PREVIEW_ROOT = "/home/v.bucciero/data/instruments/rdr0_previews_h100gpu"`
+- `DATA_PATH = "/data/rdr0_splits/"`
+- `VAL_PREVIEW_ROOT = "/previews"`
 - `RUNS_DIR = "runs"`
 - `CHECKPOINT_DIR = "checkpoints"`
 
