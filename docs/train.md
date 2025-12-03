@@ -1,4 +1,4 @@
-# RainPredRNN – Radar Nowcasting Experiment
+# RainPredictor – Radar Nowcasting Experiment
 
 This repository contains a modular PyTorch implementation of a radar rainfall
 nowcasting model (`RainPredRNN`) composed of:
@@ -11,44 +11,9 @@ nowcasting model (`RainPredRNN`) composed of:
   - Automatic saving of predictions and targets as TIFF.
   - Evaluation metrics and confusion matrix report.
 
-The code has been reorganized into a Python package (`rainpred`) plus a
-top-level `main.py` script, with dense inline comments to facilitate
-understanding and reproducibility.
 
-## 1. Environment setup
 
-Tested with:
-
-- Python 3.10+
-- CUDA-capable GPU (optional but recommended)
-- PyTorch >= 2.0
-
-Install dependencies (ideally inside a virtual environment):
-
-```bash
-pip install -r requirements.txt
-```
-
-### Suggested `requirements.txt`
-
-This project ships with a `requirements.txt` that includes:
-
-- torch
-- torchvision
-- numpy
-- pillow
-- rasterio
-- scikit-image
-- scikit-learn
-- torchio
-- pytorch-msssim
-- einops
-- tensorboard
-- tqdm  # optional, not strictly required by the current code
-
-You can adjust versions according to your CUDA / PyTorch installation.
-
-## 2. Data layout
+## 1. Data layout
 
 The code assumes that you have the entire dataset (provided its directory substructure) in a single folder (ex dataset)
 
@@ -88,9 +53,9 @@ The result :
     └── ...
 ```
 
-where each file is a single-band GeoTIFF (or TIFF) containing radar
+Where each file is a single-band GeoTIFF (or TIFF) containing radar
 reflectivity in dBZ. File naming does **not** have to match this pattern
-exactly: the dataset simply uses the sorted list of `.tif`/`.tiff` files
+exactly: the dataset uses the sorted list of `.tif`/`.tiff` files
 in each split and builds sliding temporal windows over them.
 
 Default paths in `rainpred/config.py` are:
@@ -102,7 +67,7 @@ Default paths in `rainpred/config.py` are:
 
 You will typically override these via CLI arguments (see below).
 
-## 3. Running training
+## 2. Running training
 
 Basic usage:
 
@@ -168,13 +133,13 @@ In this mode, the dataset is trimmed to small subsets:
 - Up to 64 training windows.
 - Up to 16 validation windows.
 
-This is useful to quickly verify that:
+This is useful for quickly verifying that:
 
 - The dataset paths and TIFFs are readable.
 - The model forward/backward passes work.
 - Logging, checkpointing, and preview saving work end-to-end.
 
-## 4. Reproducibility notes
+## 3. Reproducibility notes
 
 The pipeline includes several mechanisms to improve reproducibility:
 
@@ -187,7 +152,7 @@ The pipeline includes several mechanisms to improve reproducibility:
   determinism is not enforced).
 - Dataset windows are built deterministically from the sorted file list.
 - Training and validation splits are separated at the filesystem level
-  (`train/` and `val/` directories), and only valid TIFFs are used.
+  (`train/` and `val/` directories), Only valid TIFFs are used.
 
 For **bitwise reproducibility**, you may want to:
 
@@ -198,7 +163,7 @@ For **bitwise reproducibility**, you may want to:
 - Ensure your environment (CUDA, drivers, PyTorch version) is frozen,
   e.g., using a container.
 
-## 5. Outputs
+## 4. Outputs
 
 During training, the following artifacts are produced:
 
@@ -220,14 +185,14 @@ During training, the following artifacts are produced:
     - Average metrics over the validation loader.
     - Confusion matrix, precision, recall, F1, accuracy.
 
-## 6. Project structure
+## 5. Project structure
 
 ```text
 rainpred_project/
 ├─ main.py
 ├─ README.md
 ├─ requirements.txt
-└─ rainpred/
+└─ training/
    ├─ __init__.py
    ├─ config.py
    ├─ utils.py
@@ -237,15 +202,15 @@ rainpred_project/
    └─ train_utils.py
 ```
 
-- `rainpred/config.py`: default hyperparameters and paths.
-- `rainpred/utils.py`: seeding and benchmarking helpers.
-- `rainpred/data.py`: `RadarDataset`, augmentations, and dataloaders.
-- `rainpred/model.py`: `RainPredRNN` definition (encoder, transformer, decoder).
-- `rainpred/metrics.py`: scalar metrics, confusion matrix, evaluation report.
-- `rainpred/train_utils.py`: training loop per epoch and prediction/target saving.
+- `training/config.py`: default hyperparameters and paths.
+- `training/utils.py`: seeding and benchmarking helpers.
+- `training/data.py`: `RadarDataset`, augmentations, and dataloaders.
+- `training/model.py`: `RainPredRNN` definition (encoder, transformer, decoder).
+- `training/metrics.py`: scalar metrics, confusion matrix, evaluation report.
+- `training/train_utils.py`: training loop per epoch and prediction/target saving.
 - `main.py`: CLI-based training entry point tying everything together.
 
-## 7. How to reproduce your experiments
+## 6. How to reproduce your experiments
 
 1. Clone or unpack this project.
 2. Create and activate a Python 3.10+ virtual environment.
