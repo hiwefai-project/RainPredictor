@@ -1,171 +1,139 @@
-# Dataset Splitter for TIFF Files
+# Radar Dataset Splitter (`make_splits.py`)
 
-This tool splits a directory of `.tiff` files into **train**, **validation**, and **test** subsets.
-It preserves any subdirectory structure and supports two modes:
+This script scans a radar image dataset and splits it into **train**, **validation**, and **test** subsets.
+It can create either **symbolic links** (default) or **physical copies** of the original files, and it also
+performs consistency checks on the time series, reporting missing frames with **daily** and **hourly** summaries.
 
-- **symlink mode** (default): fast, lightweight
-- **copy mode** (`--copy`): physically copies the files
+## 1. Dataset Layout
 
-The script also provides:
+The script expects a directory tree like:
 
-- **train/val/test ratios configurable via CLI**
-- **cleanup of old split directories**
-- **optional shuffling with random seed**
-- **tqdm progress bars**
-- **dry-run mode** (no changes on disk)
-
-## Installation
-
-### Requirements
-
-- Python 3.8+
-- Recommended Python packages:
-  ```
-  pip install tqdm
-  ```
-If `tqdm` is not installed, the script still works but without progress bars.
-
-## Basic Usage
-
-### Default behavior
-
-If your data are located in:
-
-```
-data/rdr0/
-   └── *.tiff (possibly inside subfolders)
+```text
+BASE_PATH/
+  YYYY/
+    MM/
+      DD/
+        rdr0_d01_YYYYMMDDZhhmm_VMI.tiff
 ```
 
-simply run:
+Where:
 
-```
-python split_tiff.py
-```
+- `YYYY` – year (4 digits)
+- `MM` – month (2 digits, `01`–`12`)
+- `DD` – day of month (2 digits, `01`–`31`)
+- `hh` – hour of day (`00`–`23`)
+- `mm` – minutes (`00`, `10`, `20`, `30`, `40`, `50`)
 
-This creates:
+The filename pattern is configurable via **prefix** and **suffix** arguments:
 
-```
-data/rdr0_splits/
-    ├── train/
-    ├── val/
-    └── test/
-```
+- **Prefix** (default: `rdr0_d01_`)
+- **Suffix** (default: `_VMI.tiff`)
 
-using **symlinks**, with default ratios:
+Only files whose names start with the given prefix and end with the given suffix are considered part of the dataset.
 
-```
-train = 90%
-val   = 9%
-test  = 1%
-```
+## 2. Features
 
-## Command-Line Options
+- Recursive scan of the dataset tree under `--base-path`
+- Progress bar for dataset scanning
+- Configurable filename **prefix** and **suffix**
+- Configurable **train/val/test** ratios
+- Optional **copy mode** (`--copy`) instead of symbolic links
+- Logging to console and optional log file (`--log-file`)
+- Detection of missing radar frames in the time series (10-minute spacing)
+- Daily and hourly summary of missing time slots
 
-### Directory options
+## 3. Command-line Arguments
 
-| Flag | Description |
-|------|-------------|
-| `--root PATH` | Base directory (default: `data/rdr0/`) |
-| `--data-dir PATH` | Input directory with TIFF files (default: `--root`) |
-| `--out-dir PATH` | Output directory for splits (default: `ROOT_splits`) |
-
-### Behavior options
-
-| Flag | What it does |
-|------|---------------|
-| `--copy` | Copy files instead of creating symlinks |
-| `--dry-run` | Do not remove directories or create any files |
-| `--no-shuffle` | Keep input file order instead of random shuffle |
-| `--seed N` | Random seed used when shuffling (default: `42`) |
-
-### Ratio and pattern options
-
-| Flag | Description |
-|------|-------------|
-| `--ratios TRAIN VAL TEST` | Must sum to 1.0 (default: `0.90 0.09 0.01`) |
-| `--pattern GLOB` | Glob pattern for input search (default: `**/*.tiff`) |
-
-## Examples
-
-### 1. Default: shuffle + symlinks + standard ratios
-
-```
-python split_tiff.py
+```text
+--base-path PATH      Root folder of the dataset (e.g., data/dataset/rdr0/)
+--output PATH         Output directory where train/val/test folders will be created
+--prefix STR          Filename prefix, e.g. 'rdr0_d01_' (default: 'rdr0_d01_')
+--suffix STR          Filename suffix, e.g. '_VMI.tiff' (default: '_VMI.tiff')
+--ratios R1 R2 R3     Train/Val/Test ratios (default: 0.9 0.05 0.05)
+--seed INT            Random seed for shuffling (default: 42)
+--copy                If set, copy files instead of creating symlinks
+--log-file PATH       Optional log file path; if set, logs are written to this file in addition to the console
 ```
 
-### 2. Dry-run (no filesystem changes)
+## 4. Basic Usage Examples
 
-```
-python split_tiff.py --dry-run
-```
+### 4.1. Using symbolic links (default)
 
-Shows what would be done, but does *not* modify anything.
+This is usually preferred to avoid duplicating the dataset on disk:
 
-### 3. Copy files instead of symlinks
-
-```
-python split_tiff.py --copy
+```bash
+python make_splits.py   --base-path data/dataset/rdr0   --output data/splits   --prefix rdr0_d01_   --suffix _VMI.tiff   --ratios 0.9 0.05 0.05
 ```
 
-### 4. Change train/val/test ratios
+After running, the script will create:
 
-Split 80/10/10:
-
-```
-python split_tiff.py --ratios 0.8 0.1 0.1
-```
-
-### 5. Disable shuffling and keep sorted order
-
-```
-python split_tiff.py --no-shuffle
+```text
+data/splits/
+  train/
+  val/
+  test/
 ```
 
-### 6. Custom input and output directories
+Each folder will contain either symlinks (default) or copies (if `--copy` is used) of the original TIFF files.
 
-```
-python split_tiff.py \
-    --data-dir /datasets/radar/raw \
-    --out-dir /datasets/radar/splits \
-    --copy
-```
+### 4.2. Using copy mode
 
-### 7. Using a different file pattern
+If your environment does not support symbolic links well (e.g., some network filesystems or Windows setups),
+you can enable copy mode:
 
-```
-python split_tiff.py --pattern "*.tif"
+```bash
+python make_splits.py   --base-path data/dataset/rdr0   --output data/splits_copy   --prefix rdr0_d01_   --suffix _VMI.tiff   --ratios 0.8 0.1 0.1   --copy
 ```
 
-## Output Structure
+This will physically copy the files into the split directories.
 
-If the input contains nested folders:
+### 4.3. Logging to a file
 
-```
-data/rdr0/
-   site_A/2023/*.tiff
-   site_B/2024/*.tiff
-```
+To keep a persistent log of the operations and the detected missing frames:
 
-The script preserves structure:
-
-```
-data/rdr0_splits/
-   train/
-       site_A/2023/...
-       site_B/2024/...
-   val/
-       site_A/2023/...
-       site_B/2024/...
-   test/
-       site_A/2023/...
-       site_B/2024/...
+```bash
+python make_splits.py   --base-path data/dataset/rdr0   --output data/splits   --log-file split_radar.log
 ```
 
-## Notes
+The log file will contain entries such as:
 
-- Symlink mode is recommended for large datasets (fast + minimal disk usage).
-- Copy mode is recommended only if:
-  - you need portability,
-  - working on Windows without symlink permissions,
-  - or training code cannot follow symlinks.
+```text
+2025-12-04 17:02:10 - INFO - Collected 12840 files matching prefix='rdr0_d01_' suffix='_VMI.tiff'.
+2025-12-04 17:02:11 - WARNING - Missing frames on 2025-06-10: 2 slots of 10 min
+2025-12-04 17:02:11 - WARNING -   2025-06-10 hour 15: 1 missing slots
+2025-12-04 17:02:11 - WARNING -   2025-06-10 hour 16: 1 missing slots
+```
 
+## 5. Missing-data Reporting
+
+The script assumes that radar images are acquired every **10 minutes**.
+
+1. It parses timestamps from filenames using the pattern `YYYYMMDDZhhmm`.
+2. It builds the expected regular time series between the first and last timestamps.
+3. It computes the set of **missing timestamps** (slots where a file should exist but does not).
+4. It aggregates missing timestamps:
+   - by **day** (`YYYY-MM-DD`)
+   - by **day + hour** (`YYYY-MM-DD`, `HH`)
+
+The summary is written to the log as warnings, e.g.:
+
+```text
+WARNING - Missing frames on 2025-06-10: 3 slots of 10 min
+WARNING -   2025-06-10 hour 15: 2 missing slots
+WARNING -   2025-06-10 hour 16: 1 missing slots
+```
+
+This helps quickly identify problematic days or hours in the dataset.
+
+## 6. Reproducibility
+
+The splitting is randomized but controlled by the `--seed` argument (default: `42`). Using the same seed and
+The same input dataset will produce the same train/val/test partition.
+
+## 7. Notes
+
+- Make sure `--base-path` points to the root directory that contains the `YYYY/` folders.
+- The script operates **read-only** on the dataset; it never deletes or modifies original TIFF files.
+- In symlink mode, deleting the split directories does **not** affect the original dataset.
+- In copy mode, each split directory will contain complete copies of the TIFF files, so ensure that you have
+  enough disk space.
