@@ -45,6 +45,10 @@ def main():
     parser.add_argument("--pred-length", type=int, default=PRED_LENGTH, help="Prediction length (frames).")
     parser.add_argument("--small-debug", action="store_true",
                         help="Use small subset of data for quick tests.")
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="Path to checkpoint (.pth) to resume training from.")
+    parser.add_argument("--save-every", type=int, default=1,
+                        help="Save the last checkpoint every N epochs (default: 1).")
     args = parser.parse_args()
 
     set_seed(15)
@@ -58,6 +62,9 @@ def main():
     num_workers = int(args.num_workers)
     pred_length = int(args.pred_length)
     small_debug = bool(args.small_debug)
+    resume_from = args.resume_from
+    save_every = int(args.save_every)
+    start_epoch = 0
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = os.path.join(runs_dir, timestamp)
@@ -72,7 +79,17 @@ def main():
         patch_height=16,
         patch_width=16,
         pred_length=pred_length,
-    ).to(DEVICE)
+    )
+
+    # Move model to device and enable multi-GPU training if available.
+    if DEVICE == "cuda":
+        n_gpus = torch.cuda.device_count()
+        if n_gpus > 1:
+            print(f"Using torch.nn.DataParallel on {n_gpus} GPUs")
+            model = torch.nn.DataParallel(model)
+        model = model.to(DEVICE)
+    else:
+        model = model.to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=5)
@@ -88,6 +105,46 @@ def main():
 
     steps_train = len(train_loader)
     steps_val = len(val_loader)
+
+    best_val = float("inf")
+
+    # ----- Optional: resume training from a checkpoint -----
+    if resume_from is not None:
+        if os.path.isfile(resume_from):
+            print(f"Resuming training from checkpoint: {resume_from}")
+            ckpt = torch.load(resume_from, map_location=DEVICE)
+
+            # Extract the model state dict (handle plain or dict checkpoints).
+            if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+                state_dict = ckpt["model_state_dict"]
+            else:
+                state_dict = ckpt
+
+            # Handle checkpoints saved from DataParallel (keys starting with 'module.').
+            if any(k.startswith("module.") for k in state_dict.keys()):
+                state_dict = {k[len("module.") :]: v for k, v in state_dict.items()}
+
+            # Load weights into the underlying model if wrapped in DataParallel.
+            model_to_load = model.module if isinstance(model, torch.nn.DataParallel) else model
+            model_to_load.load_state_dict(state_dict)
+
+            # Restore optimizer state if present.
+            if isinstance(ckpt, dict) and "optimizer_state_dict" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
+            # Restore best_val and starting epoch if present.
+            if isinstance(ckpt, dict):
+                if "best_val" in ckpt:
+                    best_val = ckpt["best_val"]
+                elif "metrics" in ckpt and "TOTAL" in ckpt["metrics"]:
+                    best_val = ckpt["metrics"]["TOTAL"]
+
+                if "epoch" in ckpt:
+                    start_epoch = ckpt["epoch"] + 1
+
+            print(f"Resumed from epoch {start_epoch}, best_val={best_val:.6f}")
+        else:
+            print(f"WARNING: --resume-from path not found: {resume_from}")
 
     bps_train = benchmark_train(
         train_loader, model, optimizer, DEVICE, criterion_sl1,
@@ -106,9 +163,7 @@ def main():
     os.makedirs(val_preview_root, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    best_val = float("inf")
-
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print(f"Epoch {epoch + 1}/{num_epochs}")
         train_loss = train_epoch(
             model, train_loader, optimizer, DEVICE, scaler=scaler, pred_length=pred_length
@@ -132,15 +187,33 @@ def main():
 
         if val_metrics["TOTAL"] < best_val:
             best_val = val_metrics["TOTAL"]
+            model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
             torch.save(
                 {
                     "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
+                    "model_state_dict": model_to_save.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "metrics": val_metrics,
                     "confusion_matrix": conf_matrix,
+                    "best_val": best_val,
                 },
                 os.path.join(checkpoint_dir, "best_model.pth"),
+            )
+
+        # Save the last checkpoint regularly for potential restarts.
+        if ((epoch + 1) % save_every == 0) or (epoch + 1 == num_epochs):
+            model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
+            last_ckpt_path = os.path.join(checkpoint_dir, "last_checkpoint.pth")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model_to_save.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "metrics": val_metrics,
+                    "confusion_matrix": conf_matrix,
+                    "best_val": best_val,
+                },
+                last_ckpt_path,
             )
 
     train_writer.close()
