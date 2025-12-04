@@ -158,6 +158,9 @@ def verify_checksum(path: str, expected_sha: str, logger=None) -> bool:
 def resample_image(path: str, factor: float, logger=None) -> bool:
     """Resample an image in-place by the given factor, preserving aspect ratio.
 
+    If the file is a GeoTIFF, the georeferencing information (CRS and affine
+    transform) is preserved and properly updated after resampling.
+
     The image is opened, resized, and saved back to the same path. A factor of
     1.0 leaves the image unchanged. Factors must be greater than 0.
     """
@@ -172,27 +175,80 @@ def resample_image(path: str, factor: float, logger=None) -> bool:
         logger.error("Invalid resample factor %s. It must be > 0.", factor)
         return False
 
+    # First, try a GeoTIFF-aware path using rasterio. This preserves CRS and
+    # geotransform if the image is georeferenced.
+    try:
+        import rasterio
+        from rasterio.enums import Resampling
+        from affine import Affine
+
+        with rasterio.open(path) as src:
+            width, height = src.width, src.height
+            new_width = max(1, int(round(width * factor)))
+            new_height = max(1, int(round(height * factor)))
+
+            data = src.read(
+                out_shape=(src.count, new_height, new_width),
+                resampling=Resampling.bilinear,
+            )
+
+            scale_x = width / new_width
+            scale_y = height / new_height
+            new_transform = src.transform * Affine.scale(scale_x, scale_y)
+
+            profile = src.profile
+            profile.update(
+                height=new_height,
+                width=new_width,
+                transform=new_transform,
+            )
+
+        # Write back in-place, preserving CRS and most profile fields
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(data)
+
+        logger.info(
+            "GeoTIFF resampled %s from %dx%d to %dx%d (CRS preserved)",
+            path, width, height, new_width, new_height
+        )
+        return True
+
+    except ImportError:
+        # rasterio / affine not installed: fall back to a generic PIL-based
+        # resize without geospatial metadata handling.
+        logger.warning(
+            "rasterio/affine not available; falling back to PIL for %s. "
+            "GeoTIFF metadata (if any) may not be preserved.", path
+        )
+    except Exception as e:
+        # If something went wrong specifically in the rasterio path, log and
+        # fall back to PIL below.
+        logger.warning(
+            "GeoTIFF-aware resampling failed for %s (%s); falling back to PIL.",
+            path, e
+        )
+
+    # Generic PIL-based resampling (no GeoTIFF awareness).
     try:
         from PIL import Image  # Imported lazily in case Pillow is not installed at runtime
 
         with Image.open(path) as img:
             width, height = img.size
-
             new_width = max(1, int(round(width * factor)))
             new_height = max(1, int(round(height * factor)))
 
-            # Use a reasonable resampling filter, preserving aspect ratio
             resized = img.resize((new_width, new_height), Image.BILINEAR)
             resized.save(path, format=img.format)
 
         logger.info(
-            "Resampled %s from %dx%d to %dx%d",
+            "Resampled (PIL) %s from %dx%d to %dx%d",
             path, width, height, new_width, new_height
         )
         return True
     except Exception as e:
         logger.error("Failed to resample image %s: %s", path, e)
         return False
+
 
 
 def download_one(
@@ -208,15 +264,15 @@ def download_one(
     verify_checksums: bool,
     logger=None,
 ) -> bool:
-    """Download + retry + checksum + skip logic for one file."""
+    """Download a single file with retry, optional checksum, and optional resampling."""
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    filename = build_filename(dt, prefix, postfix)
     url = build_url(dt, base_url, prefix, postfix)
     dest_path = build_output_path(output_dir, dt, prefix, postfix)
+    filename = os.path.basename(dest_path)
 
-    # skip existing
+    # Optionally skip if the file already exists
     if skip_existing and os.path.exists(dest_path):
         logger.info("Skipping existing: %s", dest_path)
         if verify_checksums and checksums and filename in checksums:
@@ -244,7 +300,8 @@ def download_one(
 
         # Optional resampling of the downloaded image (after a successful download
         # and optional checksum verification). This is done in-place and preserves
-        # the original aspect ratio.
+        # the original aspect ratio. GeoTIFFs are handled in a CRS-aware manner
+        # when rasterio/affine are available.
         if resample_factor != 1.0:
             if not resample_image(dest_path, resample_factor, logger=logger):
                 if attempt < attempts:
@@ -327,16 +384,6 @@ def main():
         checksums = load_checksums(args.checksum_file, logger)
         verify_checksums = bool(checksums)
 
-    # Safety guard: resampling modifies the downloaded files in-place, which would
-    # invalidate checksum verification on subsequent runs. To avoid confusion,
-    # forbid combining resampling with checksum verification.
-    if getattr(args, "resample", 1.0) != 1.0 and verify_checksums:
-        logger.error(
-            "Cannot use --resample together with --checksum-file. "
-            "Either drop checksum verification or set --resample 1.0."
-        )
-        sys.exit(1)
-
     # Build datetime list
     datetimes = list(iterate_datetimes(args.start, args.end, TIME_STEP_MINUTES))
 
@@ -408,3 +455,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
