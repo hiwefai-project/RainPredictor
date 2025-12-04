@@ -1,32 +1,36 @@
-# Import operating system utilities
+# Import os to handle filesystem paths
 import os
-# Import torch to detect device availability
+# Import torch to detect CUDA and select device
 import torch
 
-# Detect computation device: use CUDA if available, otherwise CPU
+# Decide which device to use: GPU if available, else CPU
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Number of workers used by DataLoader
+# Default DataLoader worker count
 NUM_WORKERS = 8
 # Default training batch size
 BATCH_SIZE = 4
-# Whether to pin host memory for faster GPU transfers
+# Enable pinned memory for faster host→device copies
 PIN_MEMORY = True
 
-# Initial learning rate for optimizer
+# Default learning rate
 LEARNING_RATE = 1e-3
-# Number of training epochs
+# Default number of epochs
 NUM_EPOCHS = 1
-# Number of frames to predict into the future
+# Default number of prediction frames
 PRED_LENGTH = 6
-# Enable mixed precision (AMP) when running on CUDA
+# Enable Automatic Mixed Precision on GPU
 USE_AMP = True
 
-# Default path to dataset containing train/val splits
+# Default patch size for temporal transformer
+PATCH_HEIGHT = 16
+PATCH_WIDTH = 16
+
+# Default dataset root (overridden by CLI)
 DATA_PATH = os.path.abspath("/home/v.bucciero/data/instruments/rdr0_splits/")
-# Default path where validation previews (predictions/targets) are saved
-VAL_PREVIEW_ROOT = os.path.abspath("/home/v.bucciero/data/instruments/rdr0_previews_h100gpu")
-# Default root for TensorBoard run logs
+# Default validation preview directory
+VAL_PREVIEW_ROOT = os.path.abspath("/home/v.bucciero/data/instruments/rdr0_previews_hybrid")
+# Default TensorBoard runs directory
 RUNS_DIR = "runs"
-# Default directory where model checkpoints are stored
+# Default checkpoint directory
 CHECKPOINT_DIR = "checkpoints"
