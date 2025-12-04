@@ -24,7 +24,7 @@ The script supports:
 ./download_dataset-2.py START_DATETIME END_DATETIME [options]
 ```
 
-Where dates are expressed as:
+where dates are expressed as:
 
 - `START_DATETIME` = `YYYYMMDDHHMM`
 - `END_DATETIME`   = `YYYYMMDDHHMM`
@@ -52,10 +52,10 @@ Example:
   Filename prefix (default: `rdr0_d02_`).
 
 - `--postfix POSTFIX`  
-  Filename postfix/extension (default: `_VMI.tiff`).
+  Filename postfix / extension (default: `_VMI.tiff`).
 
 - `--dry-run`  
-  Do not download anything; print the URLs that would be fetched.
+  Do not download anything, just print the URLs that would be fetched.
 
 - `--parallel`  
   Enable parallel downloads using a thread pool.
@@ -70,7 +70,7 @@ Example:
   Number of download attempts per file (default: 3).
 
 - `--log-file PATH`  
-  Also, write log messages to the given file.
+  Also write log messages to the given file.
 
 - `--checksum-file PATH`  
   Path to a text file with `filename sha256` pairs used to verify downloads.
@@ -87,8 +87,17 @@ Example:
   - `--resample 1.0`  → no resampling (default).
 
 Resampling is performed after a successful download (and optional checksum
-verification) using Pillow (PIL). Images are overwritten in-place, preserving
-their original format.
+verification).
+
+- If the file is handled as a GeoTIFF and the `rasterio` + `affine` packages
+  are available, resampling is done in a GeoTIFF-aware way that preserves the
+  Coordinate Reference System (CRS) and correctly updates the affine
+  geotransform.
+- Otherwise, a generic Pillow (PIL) resize is used as a fallback (without
+  explicit handling of geospatial metadata).
+
+In both cases, images are overwritten in-place, preserving their overall
+format.
 
 > **Note:** Resampling modifies the file contents, so it is **not allowed
 > together with checksum verification** (`--checksum-file`). If you set a
@@ -101,7 +110,10 @@ their original format.
 - Required Python packages:
   - `requests`
   - `tqdm`
-  - `Pillow` (only if `--resample` is used)
+  - `Pillow` (required if `--resample` is used)
+- Optional, but recommended for GeoTIFFs:
+  - `rasterio`
+  - `affine`
 
 Install them with:
 
@@ -111,9 +123,9 @@ pip install requests tqdm Pillow
 
 ## Exit codes
 
-- `0` on success (all requested files downloaded/skipped cleanly).
+- `0` on success (all requested files downloaded / skipped cleanly).
 - `1` if at least one download (or verification/resampling) fails.
 
 ---
 
-_Last update: 2025-12-04T16:29:20 UTC_
+_Last update: 2025-12-04T16:40:32 UTC_
