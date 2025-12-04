@@ -21,10 +21,10 @@ TIME_STEP_MINUTES = 10
 def parse_datetime_yyyymmddhhmm(s: str) -> datetime:
     """Parse datetime string YYYYMMDDHHMM."""
     try:
-        return datetime.strptime(s, "%Y%m%d%H%M")
+        return datetime.strptime(s, "%Y%m%dZ%H%M")
     except ValueError as e:
         raise argparse.ArgumentTypeError(
-            f"Invalid datetime '{s}'. Expected format YYYYMMDDHHMM."
+            f"Invalid datetime '{s}'. Expected format YYYYMMDDZHHMM."
         ) from e
 
 
@@ -353,7 +353,7 @@ def main():
     parser.add_argument("--postfix", default="_VMI.tiff",
                         help="Filename postfix (default: _VMI.tiff)")
 
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dryrun", action="store_true")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument( "--resample", type=float, default=1.0, help=("Resample factor for images; e.g. 0.5 halves width/height, 2.0 doubles them. 1.0 = no resampling."))
@@ -387,8 +387,8 @@ def main():
     # Build datetime list
     datetimes = list(iterate_datetimes(args.start, args.end, TIME_STEP_MINUTES))
 
-    if args.dry-run:
-        for dt in tqdm(datetimes, desc="Dry-run"):
+    if args.dryrun:
+        for dt in tqdm(datetimes, desc="Dryrun"):
             print(build_url(dt, args.base_url, args.prefix, args.postfix))
         sys.exit(0)
 
