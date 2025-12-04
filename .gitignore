@@ -174,20 +174,11 @@ cython_debug/
 .pypirc
 
 
-show_tiffs/
-recupero_tiffs/
-runs/
-test_predictions/
-source/checkpoints/
-source/old/
-source/old2/
-eval/
-dataset_nord/
-instruments/
-predictions/
-targets/
-extracted_tiff/
-logs/
-pred_out/
+.pth
 
-rdr0.tar.gz
+runs/
+checkpoints/
+logs/
+previews/
+
+
