@@ -32,8 +32,8 @@ nvidia-smi || true
 echo "====================="
 
 
-python -u main.py \
-  --data-path $THIS_DIR/data/rdr0_5k_splits \
+python -u train.py \
+  --data-path $THIS_DIR/data/rdr0_splits \
   --val-preview-root $THIS_DIR/previews \
   --runs-dir $THIS_DIR/runs \
   --checkpoint-dir $THIS_DIR/checkpoints \
