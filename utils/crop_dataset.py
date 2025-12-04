@@ -142,7 +142,7 @@ def main() -> None:
     the Vincenzo project.  Adjust ``src_dir`` and ``dest_dir`` here if
     your environment differs.
     """
-    src_dir = "/home/v.bucciero/data/instruments/rdr0_previews_h100gpu/epoch_000/predictions"
+    src_dir = "previews/epoch_000/predictions"
     dest_dir = os.path.join(os.path.dirname(src_dir), "predictions_cropped")
     process_directory(src_dir, dest_dir)
 

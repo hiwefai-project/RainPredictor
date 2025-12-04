@@ -27,9 +27,9 @@ PATCH_HEIGHT = 16
 PATCH_WIDTH = 16
 
 # Default dataset root (overridden by CLI)
-DATA_PATH = os.path.abspath("/home/v.bucciero/data/instruments/rdr0_splits/")
+DATA_PATH = os.path.abspath("data/rdr0_splits/")
 # Default validation preview directory
-VAL_PREVIEW_ROOT = os.path.abspath("/home/v.bucciero/data/instruments/rdr0_previews_hybrid")
+VAL_PREVIEW_ROOT = os.path.abspath("previews")
 # Default TensorBoard runs directory
 RUNS_DIR = "runs"
 # Default checkpoint directory
