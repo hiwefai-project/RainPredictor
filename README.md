@@ -15,10 +15,10 @@ This project implements a radar nowcasting model (`RainPredRNN`) that:
 Example input frames:
 
 ```text
-rdr0_d02_20251202Z1510_VMI.tiff
-rdr0_d02_20251202Z1520_VMI.tiff
+rdr0_d01_20251202Z1510_VMI.tiff
+rdr0_d01_20251202Z1520_VMI.tiff
 ...
-rdr0_d02_20251202Z1800_VMI.tiff
+rdr0_d01_20251202Z1800_VMI.tiff
 ```
 
 If you run:
@@ -39,8 +39,8 @@ The code:
 - Produces future filenames:
 
 ```text
-rdr0_d02_20251202Z1810_VMI.tiff
-rdr0_d02_20251202Z1820_VMI.tiff
+rdr0_d01_20251202Z1810_VMI.tiff
+rdr0_d01_20251202Z1820_VMI.tiff
 ...
 ```
 
@@ -53,9 +53,9 @@ Dataset layout:
 ```text
 /data/rdr0_splits/
 ├─ train/
-│  ├─ rdr0_d02_*.tiff
+│  ├─ rdr0_d01_*.tiff
 ├─ val/
-│  ├─ rdr0_d02_*.tiff
+│  ├─ rdr0_d01_*.tiff
 ```
 
 Train with:
@@ -100,8 +100,8 @@ Options:
 
 ```bash
 python compare.py \
-  --input /data/radar_seq/rdr0_d02_20251202Z1800_VMI.tiff \
-  --pred  /data/preds/rdr0_d02_20251202Z1810_VMI.tiff \
+  --input /data/radar_seq/rdr0_d01_20251202Z1800_VMI.tiff \
+  --pred  /data/preds/rdr0_d01_20251202Z1810_VMI.tiff \
   --title "t=1800 vs t+1 prediction"
 ```
 
