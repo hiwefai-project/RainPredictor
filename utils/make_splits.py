@@ -1,189 +1,346 @@
 #!/usr/bin/env python3
 import os
-import glob
-import math
-import random
 import argparse
+import random
+import logging
 import shutil
-
-# Progress bar (tqdm); fallback to plain iterator if not available
-try:
-    from tqdm import tqdm
-except ImportError:  # simple fallback
-    def tqdm(iterable, **kwargs):
-        return iterable
+from pathlib import Path
+from collections import Counter
+from datetime import datetime, timedelta
+from tqdm import tqdm
 
 
-def ensure_dir(p: str) -> None:
-    os.makedirs(p, exist_ok=True)
+# -------------------------------------------------------------
+# Configure logging: console + optional file
+# -------------------------------------------------------------
+def configure_logging(log_file=None, level=logging.INFO):
+    # Create logger
+    logger = logging.getLogger("dataset_splitter")
+    logger.setLevel(level)
+
+    # Avoid adding multiple handlers if configure_logging is called twice
+    if not logger.handlers:
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(level)
+        console_formatter = logging.Formatter("%(levelname)s - %(message)s")
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
+
+        # Optional file handler
+        if log_file:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(level)
+            file_formatter = logging.Formatter(
+                "%(asctime)s - %(levelname)s - %(message)s"
+            )
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
+    else:
+        # If we already have handlers and a log_file is requested, add it
+        if log_file and not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(level)
+            file_formatter = logging.Formatter(
+                "%(asctime)s - %(levelname)s - %(message)s"
+            )
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
+
+    return logger
 
 
-def parse_args():
+# -------------------------------------------------------------
+# Collect all files matching prefix/suffix with a scan progress bar
+# -------------------------------------------------------------
+def collect_files(base_path, prefix, suffix, logger):
+    collected = []
+
+    # Progress bar with unknown total; we update by one per scanned file
+    with tqdm(desc="Scanning dataset", unit="files") as pbar:
+        for root, dirs, files in os.walk(base_path):
+            for f in files:
+                pbar.update(1)
+                if f.startswith(prefix) and f.endswith(suffix):
+                    collected.append(Path(root) / f)
+
+    logger.info(
+        f"Collected {len(collected)} files matching prefix='{prefix}' suffix='{suffix}'."
+    )
+    return collected
+
+
+# -------------------------------------------------------------
+# Detect missing frames:
+#  - Build expected 10-minute time series between min/max timestamp
+#  - Report gaps and daily/hourly missing-slot summaries
+# -------------------------------------------------------------
+def detect_missing_files(files, prefix, logger):
+    timestamps = []
+
+    # Extract timestamps from filenames
+    for p in files:
+        # Expected name pattern segment after prefix: YYYYMMDDZhhmm
+        # Example: rdr0_d01_20250610Z1530_VMI.tiff -> 20250610Z1530
+        try:
+            ts_str = p.name.replace(prefix, "").split("_")[0]
+            ts = datetime.strptime(ts_str, "%Y%m%dZ%H%M")
+            timestamps.append(ts)
+        except Exception:
+            logger.warning(f"Skipping malformed filename: {p.name}")
+
+    if not timestamps:
+        logger.warning("No valid timestamps found; skipping missing-data analysis.")
+        return {
+            "gaps": [],
+            "missing_timestamps": [],
+            "daily": Counter(),
+            "hourly": Counter(),
+        }
+
+    # Sort and deduplicate timestamps
+    timestamps = sorted(set(timestamps))
+    first = timestamps[0]
+    last = timestamps[-1]
+
+    # Build full expected 10-minute time series from first to last
+    expected = []
+    cur = first
+    while cur <= last:
+        expected.append(cur)
+        cur += timedelta(minutes=10)
+
+    existing_set = set(timestamps)
+    missing_ts = [t for t in expected if t not in existing_set]
+
+    if missing_ts:
+        logger.warning(f"Detected {len(missing_ts)} missing 10-minute slots in dataset.")
+    else:
+        logger.info("No missing frames detected in the 10-minute time series.")
+
+    # Build gap list from missing timestamps (consecutive groups)
+    gaps = []
+    if missing_ts:
+        start_gap = missing_ts[0]
+        prev = missing_ts[0]
+        for t in missing_ts[1:]:
+            if (t - prev) > timedelta(minutes=10):
+                # gap ended at 'prev'
+                gaps.append((start_gap, prev))
+                start_gap = t
+            prev = t
+        # last gap
+        gaps.append((start_gap, prev))
+
+    # Daily and hourly aggregates
+    daily_counter = Counter(t.date() for t in missing_ts)
+    hourly_counter = Counter((t.date(), t.hour) for t in missing_ts)
+
+    # Log daily summary
+    if daily_counter:
+        logger.warning("Daily missing-frame summary:")
+        for day, count in sorted(daily_counter.items()):
+            logger.warning(f"  Missing frames on {day}: {count} slots of 10 min")
+
+    # Log hourly summary
+    if hourly_counter:
+        logger.warning("Hourly missing-frame summary:")
+        for (day, hour), count in sorted(hourly_counter.items()):
+            logger.warning(
+                f"  {day} hour {hour:02d}: {count} missing slots (10-min each)"
+            )
+
+    # Log human-readable gap ranges
+    if gaps:
+        logger.warning("Temporal gaps in dataset:")
+        for a, b in gaps:
+            logger.warning(f"  Gap from {a} to {b}")
+
+    return {
+        "gaps": gaps,
+        "missing_timestamps": missing_ts,
+        "daily": daily_counter,
+        "hourly": hourly_counter,
+    }
+
+
+# -------------------------------------------------------------
+# Ensure train/val/test directories exist
+# -------------------------------------------------------------
+def create_split_dirs(out_dir, logger):
+    split_dirs = {
+        "train": Path(out_dir) / "train",
+        "val": Path(out_dir) / "val",
+        "test": Path(out_dir) / "test",
+    }
+
+    for d in split_dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Output split directories created under {out_dir}.")
+    return split_dirs
+
+
+# -------------------------------------------------------------
+# Populate a split directory:
+#   - symlink mode (default) or copy mode (--copy)
+# -------------------------------------------------------------
+def populate_split(file_list, out_dir, logger, copy_mode=False):
+    mode_str = "copy" if copy_mode else "symlink"
+    logger.info(f"Populating '{out_dir.name}' using {mode_str} mode.")
+
+    for f in tqdm(file_list, desc=f"Populating {out_dir.name}", unit="files"):
+        target = out_dir / f.name
+
+        # Remove old file/link if exists
+        if target.exists() or target.is_symlink():
+            try:
+                target.unlink()
+            except Exception as e:
+                logger.error(f"Failed to remove existing target {target}: {e}")
+                continue
+
+        # Create copy or symlink
+        try:
+            if copy_mode:
+                shutil.copy2(f, target)
+            else:
+                target.symlink_to(f)
+        except Exception as e:
+            logger.error(f"Failed to create {mode_str} for {f} → {target}: {e}")
+
+
+# -------------------------------------------------------------
+# Main program
+# -------------------------------------------------------------
+def main():
     parser = argparse.ArgumentParser(
-        description="Split a dataset of .tiff files into train/val/test using symlinks or copies."
+        description="Split radar dataset into train/val/test subsets."
     )
 
-    # Base paths
+    # Root of dataset
     parser.add_argument(
-        "--root",
-        default="data/rdr0/",
-        help="Base directory (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--data-dir",
-        default=None,
-        help="Directory containing input .tiff files. "
-             "If unset, defaults to ROOT.",
-    )
-    parser.add_argument(
-        "--out-dir",
-        default=None,
-        help="Directory where train/val/test splits will be created. "
-             "If unset, defaults to ROOT_splits.",
+        "--base-path",
+        type=str,
+        required=True,
+        help="Root folder of the dataset (e.g., data/dataset/rdr0/)",
     )
 
-    # Pattern and ratios
+    # Filename prefix and suffix
     parser.add_argument(
-        "--pattern",
-        default="**/*.tiff",
-        help="Glob pattern (relative to data-dir) to find files (default: %(default)s)",
+        "--prefix",
+        type=str,
+        default="rdr0_d01_",
+        help="Filename prefix, e.g. 'rdr0_d01_'",
     )
+    parser.add_argument(
+        "--suffix",
+        type=str,
+        default="_VMI.tiff",
+        help="Filename suffix, e.g. '_VMI.tiff'",
+    )
+
+    # Output directory for splits
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        help="Output directory for train/val/test splits.",
+    )
+
+    # Ratios for train/val/test
     parser.add_argument(
         "--ratios",
         nargs=3,
         type=float,
-        metavar=("TRAIN", "VAL", "TEST"),
-        default=(0.90, 0.09, 0.01),
-        help="Train/val/test split ratios (must sum to 1.0). Default: 0.90 0.09 0.01",
+        default=[0.9, 0.05, 0.05],
+        help="Train/Val/Test ratios (must sum to 1).",
     )
 
-    # Behavior
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Run without modifying the filesystem (no cleanup, no symlinks/copies).",
-    )
+    # Random seed for reproducibility
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed used when shuffling files (default: %(default)s).",
+        help="Random seed for shuffling.",
     )
-    parser.add_argument(
-        "--no-shuffle",
-        action="store_true",
-        help="Disable shuffling; keep files in sorted order.",
-    )
+
+    # Copy mode flag
     parser.add_argument(
         "--copy",
         action="store_true",
         help="Copy files instead of creating symlinks.",
     )
 
-    return parser.parse_args()
+    # Optional log file
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Optional log file path.",
+    )
 
+    args = parser.parse_args()
 
-def main():
-    args = parse_args()
+    # Validate ratios
+    if not abs(sum(args.ratios) - 1.0) < 1e-6:
+        raise ValueError("Train/Val/Test ratios must sum to 1.0")
 
-    root = args.root
-    data_dir = args.data_dir or root
-    out_dir  = args.out_dir  or f"{root.rstrip('/')}_splits"
-    pattern  = args.pattern
-    ratios   = tuple(args.ratios)
-    dry_run  = args.dry_run
+    # Initialize logger
+    logger = configure_logging(log_file=args.log_file)
 
-    # Collect files
-    files = sorted(glob.glob(os.path.join(data_dir, pattern), recursive=True))
+    logger.info("Starting dataset split process...")
+    logger.info(f"Base path: {args.base_path}")
+    logger.info(f"Output path: {args.output}")
+    logger.info(f"Prefix: {args.prefix}  Suffix: {args.suffix}")
+    logger.info(f"Ratios (train/val/test): {args.ratios}")
+    logger.info(f"Copy mode: {'ON' if args.copy else 'OFF'}")
+
+    base_path = Path(args.base_path)
+    out_dir = Path(args.output)
+
+    # Step 1 — Collect files (with scan progress bar)
+    files = collect_files(base_path, args.prefix, args.suffix, logger)
+    files = sorted(files)
+
     if not files:
-        raise SystemExit(f"No files found in {data_dir} using pattern '{pattern}'.")
+        logger.error("No files found. Exiting.")
+        return
 
-    # Check ratios
-    if not math.isclose(sum(ratios), 1.0, rel_tol=1e-6):
-        raise SystemExit(f"Ratios must sum to 1.0, but sum to {sum(ratios):.6f}")
+    # Step 2 — Missing data detection + daily/hourly summary
+    missing_info = detect_missing_files(files, args.prefix, logger)
 
-    # Shuffle or not
-    if not args.no_shuffle:
-        random.seed(args.seed)
-        random.shuffle(files)
+    # Step 3 — Shuffle and split
+    random.seed(args.seed)
+    random.shuffle(files)
 
-    # Compute split sizes
     n = len(files)
-    n_train = int(math.floor(n * ratios[0]))
-    n_val   = int(math.floor(n * ratios[1]))
-    n_test  = n - n_train - n_val
+    n_train = int(args.ratios[0] * n)
+    n_val = int(args.ratios[1] * n)
 
     train_files = files[:n_train]
-    val_files   = files[n_train:n_train + n_val]
-    test_files  = files[n_train + n_val:]
+    val_files = files[n_train : n_train + n_val]
+    test_files = files[n_train + n_val :]
 
-    print(f"Total files: {n} | train: {len(train_files)}  val: {len(val_files)}  test: {len(test_files)}")
-    print(f"Input directory:  {data_dir}")
-    print(f"Output directory: {out_dir}")
-    mode_str = "COPY" if args.copy else "SYMLINK"
-    print(f"Mode: {mode_str}")
-    if dry_run:
-        print("DRY RUN: no directories will be removed and no symlinks/copies will be created.")
+    logger.info(f"Total files: {n}")
+    logger.info(f"Train set: {len(train_files)} files")
+    logger.info(f"Validation set: {len(val_files)} files")
+    logger.info(f"Test set: {len(test_files)} files")
 
-    # Prepare output dirs
-    train_dir = os.path.join(out_dir, "train")
-    val_dir   = os.path.join(out_dir, "val")
-    test_dir  = os.path.join(out_dir, "test")
+    # Step 4 — Prepare output dirs
+    split_dirs = create_split_dirs(out_dir, logger)
 
-    # Cleanup existing split dirs (only if not dry-run)
-    if not dry_run:
-        for d in (train_dir, val_dir, test_dir):
-            if os.path.exists(d):
-                print(f"Removing existing directory: {d}")
-                shutil.rmtree(d, ignore_errors=True)
-    else:
-        for d in (train_dir, val_dir, test_dir):
-            if os.path.exists(d):
-                print(f"DRY RUN: would remove existing directory: {d}")
+    # Step 5 — Populate splits (symlinks or copies)
+    populate_split(train_files, split_dirs["train"], logger, copy_mode=args.copy)
+    populate_split(val_files, split_dirs["val"], logger, copy_mode=args.copy)
+    populate_split(test_files, split_dirs["test"], logger, copy_mode=args.copy)
 
-    # Create fresh dirs
-    for d in (train_dir, val_dir, test_dir):
-        if not dry_run:  # in dry run we skip creating as well
-            ensure_dir(d)
-
-    # Symlink/copy creation preserving directory structure
-    def link_or_copy_into(subset_files, subset_dir, desc):
-        if not subset_files:
-            return
-        for src in tqdm(subset_files, desc=desc):
-            rel = os.path.relpath(src, data_dir)
-            dst_dir = os.path.join(subset_dir, os.path.dirname(rel))
-            dst = os.path.join(dst_dir, os.path.basename(src))
-
-            if dry_run:
-                # Just show what would be done
-                continue
-
-            ensure_dir(dst_dir)
-
-            if os.path.islink(dst) or os.path.exists(dst):
-                continue
-
-            try:
-                if args.copy:
-                    shutil.copy2(src, dst)
-                else:
-                    os.symlink(src, dst)
-            except FileExistsError:
-                # Race conditions or parallel runs; safe to ignore
-                pass
-
-    link_or_copy_into(train_files, train_dir, "train")
-    link_or_copy_into(val_files,   val_dir,   "val")
-    link_or_copy_into(test_files,  test_dir,  "test")
-
-    print(f"Dataset split ready in: {out_dir}")
-    print("Sample files (first 3):")
-    print("  train:", train_files[:3])
-    print("  val  :", val_files[:3])
-    print("  test :", test_files[:3])
+    logger.info("Dataset split completed successfully.")
 
 
+# -------------------------------------------------------------
+# Entry point
+# -------------------------------------------------------------
 if __name__ == "__main__":
     main()
 
