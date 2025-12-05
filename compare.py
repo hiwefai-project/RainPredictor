@@ -1,547 +1,419 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# The above shebang and encoding line make the script executable from the shell
-# and ensure correct handling of UTF-8 characters in titles and labels.
+import argparse
+import json
+import logging
+import os
+import re
+from pathlib import Path
 
-import argparse              # Import argparse to parse command-line arguments.
-import os                    # Import os for filesystem path manipulations.
-from typing import List, Tuple  # Import typing helpers for better code clarity.
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
-import numpy as np           # Import NumPy for numerical array operations.
-import matplotlib.pyplot as plt  # Import Matplotlib for plotting.
-import rasterio              # Import rasterio for reading GeoTIFF files.
-from rasterio.transform import xy  # Import helper to convert indices to coordinates.
+# Optional GeoTIFF-aware reader (rasterio) with fallback to PIL
+try:
+    import rasterio
+    HAS_RASTERIO = True
+except ImportError:
+    HAS_RASTERIO = False
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 
-# -----------------------------------------------------------------------------
-# Utility functions
-# -----------------------------------------------------------------------------
+TIMESTAMP_RE = re.compile(r"(\d{8}Z\d{4})")  # e.g. 20251202Z1810
 
-def read_geotiff(path: str) -> Tuple[np.ndarray, dict]:
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+def setup_logging(level_str: str) -> None:
+    """Configure the root logger."""
+    level = getattr(logging, level_str.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Palette handling
+# ---------------------------------------------------------------------------
+def load_palette(path: Path):
     """
-    Read a GeoTIFF file and return the image array and raster metadata.
+    Load a radar palette JSON file of the form:
 
-    Parameters
-    ----------
-    path : str
-        Path to the GeoTIFF file.
+    {
+      "levels": [-10, -5, 0, 5, ...],
+      "colors": ["#646464", "#04e9e7", ...],
+      "label": "Reflectivity (dBZ)"
+    }
 
-    Returns
-    -------
-    data : np.ndarray
-        2D array with the raster values (first band).
-    meta : dict
-        Raster metadata dictionary containing CRS, transform, etc.
+    Returns:
+        cmap  : matplotlib ListedColormap
+        norm  : matplotlib BoundaryNorm
+        label : string for colorbar label (may be empty)
     """
-    # Open the GeoTIFF using rasterio's context manager.
-    with rasterio.open(path) as ds:
-        # Read the first band (index 1) as a 2D NumPy array.
-        data = ds.read(1)
-        # Copy the dataset metadata to a Python dictionary.
-        meta = ds.meta.copy()
-    # Return both the data array and the metadata dictionary.
-    return data, meta
+    logger.info(f"Loading palette from {path}")
+    with path.open("r") as f:
+        pal = json.load(f)
+
+    levels = pal["levels"]
+    colors = pal["colors"]
+    label = pal.get("label", "")
+
+    if len(colors) != len(levels):
+        raise ValueError(
+            f"Palette {path}: {len(colors)} colors but {len(levels)} levels."
+        )
+
+    # Matplotlib BoundaryNorm expects (#boundaries == #colors + 1)
+    boundaries = np.array(levels + [levels[-1] + 1], dtype=float)
+
+    cmap = mcolors.ListedColormap(colors)
+    norm = mcolors.BoundaryNorm(boundaries, cmap.N)
+
+    logger.info(
+        "Palette loaded: %d colors, min=%.3f, max=%.3f",
+        len(colors),
+        levels[0],
+        levels[-1],
+    )
+    return cmap, norm, label
 
 
-def compute_extent(meta: dict) -> Tuple[float, float, float, float]:
+# ---------------------------------------------------------------------------
+# I/O helpers
+# ---------------------------------------------------------------------------
+def extract_timestamp(path: Path):
     """
-    Compute the plotting extent (min_x, max_x, min_y, max_y) in coordinate
-    space from a raster metadata dictionary.
-
-    Parameters
-    ----------
-    meta : dict
-        Raster metadata containing at least 'transform', 'height', and 'width'.
-
-    Returns
-    -------
-    extent : tuple
-        (min_x, max_x, min_y, max_y) suitable for Matplotlib's imshow.
+    Extract timestamp of the form YYYYMMDDZhhmm from file name.
+    Returns the string or None if not found.
     """
-    # Extract the affine transform from the metadata.
-    transform = meta["transform"]
-    # Extract the raster height (rows) and width (columns).
-    height = meta["height"]
-    width = meta["width"]
-
-    # Compute the coordinates of the upper-left pixel (row=0, col=0).
-    x_min, y_max = xy(transform, 0, 0)
-    # Compute the coordinates of the lower-right pixel (row=height, col=width).
-    # Note: using height and width instead of height-1, width-1 is fine here
-    # to cover the full raster in plotting extent.
-    x_max, y_min = xy(transform, height, width)
-
-    # Return the extent as (min_x, max_x, min_y, max_y).
-    return (x_min, x_max, y_min, y_max)
+    m = TIMESTAMP_RE.search(path.name)
+    if m:
+        return m.group(1)
+    return None
 
 
-def build_sequence_pairs(
-    real_dir: str,
-    pred_dir: str,
-    start: str = None,
-    end: str = None,
-) -> List[Tuple[str, str, str]]:
+def scan_directory_for_tiffs(dir_path: Path):
     """
-    Build a sorted list of (timestamp, real_path, pred_path) pairs from two
-    directories, optionally restricted by a time interval.
-
-    The function assumes that both real and predicted frames use filenames
-    that contain a timestamp substring of the form 'YYYYMMDDZhhmm', as in:
-      rdr0_d01_20251202Z1510_VMI.tiff
-
-    Parameters
-    ----------
-    real_dir : str
-        Directory containing the reference (observed) frames.
-    pred_dir : str
-        Directory containing the predicted frames.
-    start : str, optional
-        Start timestamp filter in the form 'YYYYMMDDZhhmm' (inclusive).
-    end : str, optional
-        End timestamp filter in the form 'YYYYMMDDZhhmm' (inclusive).
-
-    Returns
-    -------
-    pairs : list of (timestamp, real_path, pred_path)
-        Sorted list of matching timestamped file pairs that satisfy the
-        optional time interval.
+    Recursively scan directory for .tif/.tiff files and build a mapping:
+        timestamp -> Path
+    where timestamp is of the form YYYYMMDDZhhmm extracted from the filename.
     """
-    # Normalize input directories by expanding '~' and making them absolute.
-    real_dir = os.path.abspath(os.path.expanduser(real_dir))
-    pred_dir = os.path.abspath(os.path.expanduser(pred_dir))
+    mapping = {}
+    logger.info(f"Scanning directory for TIFF files: {dir_path}")
+    for root, _, files in os.walk(dir_path):
+        for fname in files:
+            if not fname.lower().endswith((".tif", ".tiff")):
+                continue
+            fpath = Path(root) / fname
+            ts = extract_timestamp(fpath)
+            if ts is None:
+                logger.debug("No timestamp found in file name: %s", fpath)
+                continue
+            mapping[ts] = fpath
+    logger.info("Found %d TIFF files with valid timestamps in %s", len(mapping), dir_path)
+    return mapping
 
-    # Helper function to extract the timestamp token "YYYYMMDDZhhmm"
-    # from a filename. Returns None if it cannot be found.
-    def extract_timestamp(name: str) -> str:
-        # Split the filename by underscores and search for the token
-        # that contains 'Z' and has the expected length (13).
-        parts = name.split("_")
-        for token in parts:
-            if "Z" in token and len(token) >= 13:
-                # Return exactly the first 13 characters (YYYYMMDDZhhmm).
-                return token[:13]
-        # If no valid token is found, return None.
-        return None
 
-    # Dictionary mapping timestamp -> real file path.
-    real_map = {}
-    # Iterate over all entries in the real directory.
-    for fname in sorted(os.listdir(real_dir)):
-        # Build the absolute path.
-        full = os.path.join(real_dir, fname)
-        # Skip directories and non-files.
-        if not os.path.isfile(full):
-            continue
-        # Try to extract a timestamp from the file name.
-        ts = extract_timestamp(fname)
-        # If successful, store the mapping.
-        if ts is not None:
-            real_map[ts] = full
+def read_tiff(path: Path) -> np.ndarray:
+    """
+    Read the first band of a TIFF/GeoTIFF as a float32 numpy array.
+    Handles nodata as NaN when using rasterio.
+    """
+    logger.debug("Reading TIFF: %s", path)
 
-    # Dictionary mapping timestamp -> predicted file path.
-    pred_map = {}
-    # Iterate over all entries in the predicted directory.
-    for fname in sorted(os.listdir(pred_dir)):
-        # Build the absolute path.
-        full = os.path.join(pred_dir, fname)
-        # Skip directories and non-files.
-        if not os.path.isfile(full):
-            continue
-        # Try to extract a timestamp from the file name.
-        ts = extract_timestamp(fname)
-        # If successful, store the mapping.
-        if ts is not None:
-            pred_map[ts] = full
+    if HAS_RASTERIO:
+        with rasterio.open(path) as src:
+            data = src.read(1).astype(np.float32)
+            nodata = src.nodata
+            if nodata is not None:
+                data[data == nodata] = np.nan
+        return data
 
-    # Compute the intersection of timestamps present in both maps.
+    if HAS_PIL:
+        im = Image.open(path)
+        arr = np.array(im, dtype=np.float32)
+        if arr.ndim > 2:
+            # Take first channel if multi-band
+            arr = arr[..., 0]
+        return arr
+
+    raise RuntimeError(
+        "Neither rasterio nor Pillow (PIL) is available. "
+        "Install one of them to read TIFF files."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pair building and global stats
+# ---------------------------------------------------------------------------
+def build_pairs(real_dir: Path, pred_dir: Path, start: str | None, end: str | None):
+    """
+    Build a list of (timestamp, real_path, pred_path) sorted by timestamp.
+    Restrict to timestamps between start and end (inclusive) if provided.
+    """
+    real_map = scan_directory_for_tiffs(real_dir)
+    pred_map = scan_directory_for_tiffs(pred_dir)
+
     common_ts = sorted(set(real_map.keys()) & set(pred_map.keys()))
+    logger.info("Found %d common timestamps between real and pred.", len(common_ts))
 
-    # If a start timestamp is provided, filter out earlier timestamps.
-    if start is not None:
+    if start:
         common_ts = [ts for ts in common_ts if ts >= start]
-    # If an end timestamp is provided, filter out later timestamps.
-    if end is not None:
+    if end:
         common_ts = [ts for ts in common_ts if ts <= end]
 
-    # Build the final list of (timestamp, real_path, pred_path) pairs.
-    pairs: List[Tuple[str, str, str]] = []
-    for ts in common_ts:
-        pairs.append((ts, real_map[ts], pred_map[ts]))
+    if not common_ts:
+        logger.error("No common frames found in the specified range.")
+        return []
 
-    # Return the sorted list of matching pairs.
+    logger.info(
+        "Using %d frame pairs between %s and %s",
+        len(common_ts),
+        common_ts[0],
+        common_ts[-1],
+    )
+
+    pairs = [(ts, real_map[ts], pred_map[ts]) for ts in common_ts]
     return pairs
 
 
-# -----------------------------------------------------------------------------
-# Plotting functions
-# -----------------------------------------------------------------------------
-
-def plot_single_pair(
-    real_path: str,
-    pred_path: str,
-    title: str = None,
-    save_path: str = None,
-) -> None:
+def compute_global_range(arrays: list[np.ndarray]):
     """
-    Plot a single pair of frames (real vs predicted) side-by-side.
-
-    Parameters
-    ----------
-    real_path : str
-        Path to the reference (observed) GeoTIFF file.
-    pred_path : str
-        Path to the predicted GeoTIFF file.
-    title : str, optional
-        Overall figure title.
-    save_path : str, optional
-        If provided, save the figure as a PNG to this path instead of
-        opening an interactive window.
+    Compute a NaN/inf-safe global min and max over a list of arrays.
+    Returns (vmin, vmax).
     """
-    # Read the real frame and its metadata from disk.
-    real_data, real_meta = read_geotiff(real_path)
-    # Read the predicted frame and its metadata from disk.
-    pred_data, pred_meta = read_geotiff(pred_path)
-
-    # Compute the plotting extent from the real frame metadata.
-    # We assume real and predicted frames share the same grid.
-    extent = compute_extent(real_meta)
-
-    # Compute global color limits using both arrays to have a consistent scale.
-    vmin = min(real_data.min(), pred_data.min())
-    vmax = max(real_data.max(), pred_data.max())
-
-    # Create a Matplotlib figure with two subplots side-by-side.
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    # Plot the real frame in the left subplot.
-    im0 = axes[0].imshow(
-        real_data,
-        origin="upper",
-        extent=extent,
-        vmin=vmin,
-        vmax=vmax,
-    )
-    # Set axis labels for the left subplot.
-    axes[0].set_xlabel("Longitude")
-    axes[0].set_ylabel("Latitude")
-    axes[0].set_title("Observed")
-
-    # Plot the predicted frame in the right subplot.
-    im1 = axes[1].imshow(
-        pred_data,
-        origin="upper",
-        extent=extent,
-        vmin=vmin,
-        vmax=vmax,
-    )
-    # Set axis labels for the right subplot.
-    axes[1].set_xlabel("Longitude")
-    axes[1].set_ylabel("Latitude")
-    axes[1].set_title("Predicted")
-
-    # Add a colorbar that is shared between the two subplots.
-    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Reflectivity (dBZ)")
-
-    # If a global title is provided, set it as the figure suptitle.
-    if title:
-        fig.suptitle(title, fontsize=14)
-
-    # Adjust layout to avoid overlapping labels and titles.
-    plt.tight_layout()
-
-    # If a save path is given, save the figure instead of showing it.
-    if save_path is not None:
-        # Ensure the target directory exists.
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-        # Save the figure as a PNG, with reasonable DPI and tight bounding box.
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-        # Close the figure to free memory when running in batch mode.
-        plt.close(fig)
-    else:
-        # Otherwise, display the figure interactively.
-        plt.show()
-
-
-def plot_sequence(
-    pairs: List[Tuple[str, str, str]],
-    title: str = None,
-    save_path: str = None,
-) -> None:
-    """
-    Plot a time sequence of real vs predicted frames.
-
-    The resulting figure has one row per timestamp and two columns:
-    - left column: observed frame
-    - right column: predicted frame
-
-    Parameters
-    ----------
-    pairs : list of (timestamp, real_path, pred_path)
-        List of sorted frame pairs produced by build_sequence_pairs().
-    title : str, optional
-        Overall figure title.
-    save_path : str, optional
-        If provided, save the figure as a PNG to this path instead of
-        opening an interactive window.
-    """
-    # If there are no pairs to plot, simply return without doing anything.
-    if not pairs:
-        print("[compare] No matching frames found to plot.")
-        return
-
-    # Read the first real frame to get metadata and extent.
-    first_real_data, first_meta = read_geotiff(pairs[0][1])
-    extent = compute_extent(first_meta)
-
-    # Prepare lists to track global min and max values across all frames.
     global_vmin = float("inf")
     global_vmax = float("-inf")
 
-    # First pass: read all frames and cache them to compute global color limits.
-    cached_data = []  # Each entry: (timestamp, real_data, pred_data)
-    for ts, real_path, pred_path in pairs:
-        # Read the real and predicted frames for this timestamp.
-        real_data, _ = read_geotiff(real_path)
-        pred_data, _ = read_geotiff(pred_path)
-        # Update global min and max using both frames.
-        local_min = min(real_data.min(), pred_data.min())
-        local_max = max(real_data.max(), pred_data.max())
+    for arr in arrays:
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            continue
+        local_min = float(finite.min())
+        local_max = float(finite.max())
         global_vmin = min(global_vmin, local_min)
         global_vmax = max(global_vmax, local_max)
-        # Store data in the cache list for a second plotting pass.
-        cached_data.append((ts, real_data, pred_data))
 
-    # Determine the number of rows in the figure from the number of pairs.
-    n_rows = len(cached_data)
-    # Create a Matplotlib figure with n_rows rows and 2 columns.
+    if not np.isfinite(global_vmin) or not np.isfinite(global_vmax):
+        logger.warning("No finite values found across all frames. Using [0, 1].")
+        return 0.0, 1.0
+
+    if global_vmin >= global_vmax:
+        logger.warning(
+            "Global vmin >= vmax (vmin=%.3f, vmax=%.3f). Expanding range artificially.",
+            global_vmin,
+            global_vmax,
+        )
+        global_vmax = global_vmin + 1e-6
+
+    logger.info("Global data range: vmin=%.3f, vmax=%.3f", global_vmin, global_vmax)
+    return global_vmin, global_vmax
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+def plot_sequence(
+    pairs: list[tuple[str, Path, Path]],
+    save_path: Path | None,
+    title: str | None,
+    cmap,
+    norm,
+):
+    """
+    Plot a sequence of frame pairs (real vs pred) as a 2-column figure.
+    Each row corresponds to a timestamp.
+
+    If norm is provided (e.g. from a palette), it is used.
+    Otherwise global vmin/vmax are computed and used.
+    """
+    logger.info("Sequence mode: plotting %d frame pairs.", len(pairs))
+
+    # First pass: read data and cache them
+    cached = []  # list of (ts, real_data, pred_data)
+    all_arrays = []
+
+    for ts, real_path, pred_path in pairs:
+        real_data = read_tiff(real_path)
+        pred_data = read_tiff(pred_path)
+        cached.append((ts, real_data, pred_data))
+        all_arrays.append(real_data)
+        all_arrays.append(pred_data)
+
+    # If no palette norm is provided, compute a global vmin/vmax
+    if norm is None:
+        global_vmin, global_vmax = compute_global_range(all_arrays)
+    else:
+        global_vmin = global_vmax = None  # not used
+
+    nrows = len(cached)
+    ncols = 2
+
+    fig_width = 8
+    fig_height = max(3, 2 * nrows)
     fig, axes = plt.subplots(
-        n_rows,
-        2,
-        figsize=(12, 4 * n_rows),
-        squeeze=False,  # Force axes to always be 2D array.
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(fig_width, fig_height),
+        squeeze=False,
     )
 
-    # Second pass: plot each pair using the global color limits.
-    for row_idx, (ts, real_data, pred_data) in enumerate(cached_data):
-        # Access the subplot for the observed frame in this row.
+    # Plot each pair
+    last_im = None
+    for row_idx, (ts, real_data, pred_data) in enumerate(cached):
         ax_real = axes[row_idx, 0]
-        # Access the subplot for the predicted frame in this row.
         ax_pred = axes[row_idx, 1]
 
-        # Plot the observed frame.
-        im_real = ax_real.imshow(
-            real_data,
-            origin="upper",
-            extent=extent,
-            vmin=global_vmin,
-            vmax=global_vmax,
-        )
-        # Label the axes for the observed frame.
-        ax_real.set_xlabel("Longitude")
-        ax_real.set_ylabel("Latitude")
-        # Set the subplot title including the timestamp.
-        ax_real.set_title(f"Observed @ {ts}")
+        if norm is not None:
+            im_real = ax_real.imshow(real_data, cmap=cmap, norm=norm)
+            im_pred = ax_pred.imshow(pred_data, cmap=cmap, norm=norm)
+        else:
+            im_real = ax_real.imshow(
+                real_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+            )
+            im_pred = ax_pred.imshow(
+                pred_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+            )
 
-        # Plot the predicted frame.
-        im_pred = ax_pred.imshow(
-            pred_data,
-            origin="upper",
-            extent=extent,
-            vmin=global_vmin,
-            vmax=global_vmax,
-        )
-        # Label the axes for the predicted frame.
-        ax_pred.set_xlabel("Longitude")
-        ax_pred.set_ylabel("Latitude")
-        # Set the subplot title including the timestamp.
-        ax_pred.set_title(f"Predicted @ {ts}")
+        ax_real.set_title(f"Real {ts}")
+        ax_pred.set_title(f"Pred {ts}")
 
-    # Add a shared colorbar for all subplots, using the last image handle.
-    fig.colorbar(im_pred, ax=axes.ravel().tolist(), label="Reflectivity (dBZ)")
+        ax_real.axis("off")
+        ax_pred.axis("off")
 
-    # If a global figure title is provided, set it as the suptitle.
+        last_im = im_pred  # any one image is fine for the colorbar handle
+
+    # Global title
     if title:
-        fig.suptitle(title, fontsize=16)
+        fig.suptitle(title, fontsize=14)
 
-    # Adjust layout so that titles, labels, and colorbar are not overlapping.
-    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    # Colorbar
+    if last_im is not None:
+        cbar = fig.colorbar(last_im, ax=axes.ravel().tolist(), orientation="vertical")
+        if hasattr(norm, "boundaries"):
+            # Try to deduce label from palette; otherwise generic
+            label = getattr(norm, "label", None)
+        else:
+            label = None
+        if label:
+            cbar.set_label(label)
 
-    # If a save path is given, save the figure as a PNG file.
+    # Layout: avoid tight_layout incompatibility warnings by using subplots_adjust
+    fig.subplots_adjust(top=0.92, hspace=0.3, wspace=0.1)
+
+    # Save or show
     if save_path is not None:
-        # Ensure the output directory exists.
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-        # Save the figure with tight bounding box and reasonable DPI.
+        logger.info("Saving figure to %s", save_path)
         fig.savefig(save_path, dpi=200, bbox_inches="tight")
-        # Close the figure after saving to release resources.
         plt.close(fig)
     else:
-        # Otherwise, show the interactive figure on screen.
+        logger.info("Displaying figure interactively.")
         plt.show()
 
 
-# -----------------------------------------------------------------------------
-# Command-line interface
-# -----------------------------------------------------------------------------
-
-def parse_args() -> argparse.Namespace:
-    """
-    Parse command-line arguments for the compare.py script.
-
-    Returns
-    -------
-    args : argparse.Namespace
-        The parsed arguments.
-    """
-    # Create the argument parser with a brief description.
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def parse_args():
     parser = argparse.ArgumentParser(
-        description=(
-            "Compare radar GeoTIFF frames (real vs predicted) in lon/lat. "
-            "Supports single-frame comparison or a sequence over a time interval."
-        )
+        description="Compare real vs predicted radar TIFF/GeoTIFF sequences."
     )
-
-    # Argument for a single real (input) frame path.
-    parser.add_argument(
-        "--input",
-        type=str,
-        help="Path to a single observed GeoTIFF frame.",
-    )
-
-    # Argument for a single predicted frame path.
-    parser.add_argument(
-        "--pred",
-        type=str,
-        help="Path to a single predicted GeoTIFF frame.",
-    )
-
-    # Optional title for the figure.
-    parser.add_argument(
-        "--title",
-        type=str,
-        default=None,
-        help="Optional title for the figure.",
-    )
-
-    # Directory containing real frames for sequence comparison.
     parser.add_argument(
         "--real-dir",
-        type=str,
-        default=None,
-        help=(
-            "Directory with observed frames for sequence comparison. "
-            "If provided together with --pred-dir, sequence mode is used."
-        ),
+        required=True,
+        help="Directory containing ground-truth TIFF/GeoTIFF frames.",
     )
-
-    # Directory containing predicted frames for sequence comparison.
     parser.add_argument(
         "--pred-dir",
-        type=str,
-        default=None,
-        help=(
-            "Directory with predicted frames for sequence comparison. "
-            "Must be used together with --real-dir."
-        ),
+        required=True,
+        help="Directory containing predicted TIFF/GeoTIFF frames.",
     )
-
-    # Optional start timestamp for filtering the sequence.
     parser.add_argument(
         "--start",
         type=str,
         default=None,
-        help=(
-            "Start timestamp for sequence filtering, in the form 'YYYYMMDDZhhmm'. "
-            "Only frames with timestamps >= start are included."
-        ),
+        help="Start timestamp (YYYYMMDDZhhmm). Inclusive.",
     )
-
-    # Optional end timestamp for filtering the sequence.
     parser.add_argument(
         "--end",
         type=str,
         default=None,
-        help=(
-            "End timestamp for sequence filtering, in the form 'YYYYMMDDZhhmm'. "
-            "Only frames with timestamps <= end are included."
-        ),
+        help="End timestamp (YYYYMMDDZhhmm). Inclusive.",
     )
-
-    # Optional path to save the figure instead of opening a window.
+    parser.add_argument(
+        "--title",
+        type=str,
+        default=None,
+        help="Figure title.",
+    )
     parser.add_argument(
         "--save",
         type=str,
         default=None,
-        help=(
-            "If provided, save the resulting figure as a PNG to this path "
-            "instead of displaying it on the screen."
-        ),
+        help="Path to save the output figure (e.g., out.png). If omitted, shows interactively.",
     )
-
-    # Parse and return all arguments.
+    parser.add_argument(
+        "--palette",
+        type=str,
+        default=None,
+        help="Path to palette JSON file (levels + colors). If omitted, uses 'viridis'.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR). Default: INFO.",
+    )
     return parser.parse_args()
 
 
-def main() -> None:
-    """
-    Main entry point for the compare.py script.
-    """
-    # Parse the command-line arguments.
+def main():
     args = parse_args()
+    setup_logging(args.log_level)
 
-    # Decide whether to run in single-pair mode or sequence mode.
-    sequence_mode = args.real_dir is not None or args.pred_dir is not None
+    real_dir = Path(args.real_dir).resolve()
+    pred_dir = Path(args.pred_dir).resolve()
 
-    # If sequence_mode is requested, ensure both directories are provided.
-    if sequence_mode:
-        if args.real_dir is None or args.pred_dir is None:
-            # If only one of the directories is defined, print an error message.
-            raise ValueError(
-                "Both --real-dir and --pred-dir must be provided for sequence mode."
-            )
+    if not real_dir.is_dir():
+        logger.error("real-dir does not exist or is not a directory: %s", real_dir)
+        raise SystemExit(1)
+    if not pred_dir.is_dir():
+        logger.error("pred-dir does not exist or is not a directory: %s", pred_dir)
+        raise SystemExit(1)
 
-        # Build the list of matching (timestamp, real_path, pred_path) pairs.
-        pairs = build_sequence_pairs(
-            real_dir=args.real_dir,
-            pred_dir=args.pred_dir,
-            start=args.start,
-            end=args.end,
-        )
-
-        # If there are no pairs, inform the user and exit early.
-        if not pairs:
-            print("[compare] No matching real/predicted frames found "
-                  "in the given directories and time interval.")
-            return
-
-        # Print a short log of how many frames will be plotted.
-        print(f"[compare] Sequence mode: plotting {len(pairs)} frame pairs.")
-
-        # Plot the full sequence using the dedicated plotting function.
-        plot_sequence(
-            pairs=pairs,
-            title=args.title,
-            save_path=args.save,
-        )
+    # Palette or default colormap
+    if args.palette is not None:
+        cmap, norm, label = load_palette(Path(args.palette))
+        # Attach label to norm so we can retrieve it later for the colorbar
+        if label:
+            setattr(norm, "label", label)
     else:
-        # In single-pair mode, both --input and --pred must be provided.
-        if args.input is None or args.pred is None:
-            raise ValueError(
-                "For single-frame comparison, both --input and --pred must be provided. "
-                "To compare a sequence, use --real-dir and --pred-dir."
-            )
+        cmap = plt.get_cmap("viridis")
+        norm = None
 
-        # Print a short log indicating that single-pair mode is being used.
-        print(f"[compare] Single-frame mode: {args.input} vs {args.pred}")
+    pairs = build_pairs(real_dir, pred_dir, args.start, args.end)
+    if not pairs:
+        raise SystemExit(1)
 
-        # Plot the single pair or save it depending on --save.
-        plot_single_pair(
-            real_path=args.input,
-            pred_path=args.pred,
-            title=args.title,
-            save_path=args.save,
-        )
+    save_path = Path(args.save).resolve() if args.save else None
+    plot_sequence(
+        pairs=pairs,
+        save_path=save_path,
+        title=args.title,
+        cmap=cmap,
+        norm=norm,
+    )
 
 
-# Standard Python idiom to allow running the script directly.
 if __name__ == "__main__":
     main()
