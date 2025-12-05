@@ -2,15 +2,15 @@
 """
 compare.py
 
-Compare real vs predicted radar TIFF/GeoTIFF images as side-by-side panels
+Compare truth vs predicted radar TIFF/GeoTIFF images as side-by-side panels
 for a sequence of timestamps.
 
 Features
 --------
 - Sequence mode between --start and --end timestamps (YYYYMMDDZhhmm)
-- Real vs Pred in 2 columns, one row per timestamp
+- Truth vs Pred in 2 columns, one row per timestamp
 - Optional custom radar palette JSON (--palette)
-- Robust handling of NaN/inf and constant fields (no vmin>vmax crashes)
+- Robust handling of NaN/inf and constant fields (no vmin > vmax crashes)
 - Logging instead of print
 - Colorbar placed outside the plot area to avoid overlapping images
 """
@@ -201,17 +201,17 @@ def read_tiff(path: Path) -> np.ndarray:
 # Pair building and global stats
 # ---------------------------------------------------------------------------
 def build_pairs(
-    real_dir: Path, pred_dir: Path, start: str | None, end: str | None
+    truth_dir: Path, pred_dir: Path, start: str | None, end: str | None
 ):
     """
-    Build a list of (timestamp, real_path, pred_path) sorted by timestamp.
+    Build a list of (timestamp, truth_path, pred_path) sorted by timestamp.
     Restrict to timestamps between start and end (inclusive) if provided.
     """
-    real_map = scan_directory_for_tiffs(real_dir)
+    truth_map = scan_directory_for_tiffs(truth_dir)
     pred_map = scan_directory_for_tiffs(pred_dir)
 
-    common_ts = sorted(set(real_map.keys()) & set(pred_map.keys()))
-    logger.info("Found %d common timestamps between real and pred.", len(common_ts))
+    common_ts = sorted(set(truth_map.keys()) & set(pred_map.keys()))
+    logger.info("Found %d common timestamps between truth and pred.", len(common_ts))
 
     if start:
         common_ts = [ts for ts in common_ts if ts >= start]
@@ -229,7 +229,7 @@ def build_pairs(
         common_ts[-1],
     )
 
-    pairs = [(ts, real_map[ts], pred_map[ts]) for ts in common_ts]
+    pairs = [(ts, truth_map[ts], pred_map[ts]) for ts in common_ts]
     return pairs
 
 
@@ -281,7 +281,7 @@ def plot_sequence(
     norm,
 ):
     """
-    Plot a sequence of frame pairs (real vs pred) as a 2-column figure.
+    Plot a sequence of frame pairs (truth vs pred) as a 2-column figure.
     Each row corresponds to a timestamp.
 
     If norm is provided (e.g. BoundaryNorm from a palette), it is used.
@@ -293,11 +293,11 @@ def plot_sequence(
     cached: list[tuple[str, np.ndarray, np.ndarray]] = []
     all_arrays: list[np.ndarray] = []
 
-    for ts, real_path, pred_path in pairs:
-        real_data = read_tiff(real_path)
+    for ts, truth_path, pred_path in pairs:
+        truth_data = read_tiff(truth_path)
         pred_data = read_tiff(pred_path)
-        cached.append((ts, real_data, pred_data))
-        all_arrays.append(real_data)
+        cached.append((ts, truth_data, pred_data))
+        all_arrays.append(truth_data)
         all_arrays.append(pred_data)
 
     # If no palette norm is provided, compute a global vmin/vmax
@@ -321,29 +321,29 @@ def plot_sequence(
 
     last_im = None
 
-    for row_idx, (ts, real_data, pred_data) in enumerate(cached):
-        ax_real = axes[row_idx, 0]
+    for row_idx, (ts, truth_data, pred_data) in enumerate(cached):
+        ax_truth = axes[row_idx, 0]
         ax_pred = axes[row_idx, 1]
 
         if norm is not None:
-            im_real = ax_real.imshow(real_data, cmap=cmap, norm=norm)
+            im_truth = ax_truth.imshow(truth_data, cmap=cmap, norm=norm)
             im_pred = ax_pred.imshow(pred_data, cmap=cmap, norm=norm)
         else:
-            im_real = ax_real.imshow(
-                real_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+            im_truth = ax_truth.imshow(
+                truth_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
             )
             im_pred = ax_pred.imshow(
                 pred_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
             )
 
-        ax_real.set_title(f"Real {ts}")
+        ax_truth.set_title(f"Truth {ts}")
         ax_pred.set_title(f"Pred {ts}")
 
-        ax_real.axis("off")
+        ax_truth.axis("off")
         ax_pred.axis("off")
 
         # Keep a reference to any one of the images for colorbar
-        last_im = im_pred or im_real
+        last_im = im_pred or im_truth
 
     # Colorbar on the right, outside the last column
     if last_im is not None:
@@ -377,12 +377,14 @@ def plot_sequence(
 # ---------------------------------------------------------------------------
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Compare real vs predicted radar TIFF/GeoTIFF sequences."
+        description="Compare truth vs predicted radar TIFF/GeoTIFF sequences."
     )
     parser.add_argument(
-        "--real-dir",
+        "--truth-dir",
+        "--real-dir",  # backward-compatible alias
+        dest="truth_dir",
         required=True,
-        help="Directory containing ground-truth TIFF/GeoTIFF frames.",
+        help="Directory containing truth (ground-truth) TIFF/GeoTIFF frames.",
     )
     parser.add_argument(
         "--pred-dir",
@@ -411,8 +413,10 @@ def parse_args():
         "--save",
         type=str,
         default=None,
-        help="Path to save the output figure (e.g., out.png). "
-             "If omitted, the figure is shown interactively.",
+        help=(
+            "Path to save the output figure (e.g., out.png). "
+            "If omitted, the figure is shown interactively."
+        ),
     )
     parser.add_argument(
         "--palette",
@@ -436,11 +440,11 @@ def main():
     args = parse_args()
     setup_logging(args.log_level)
 
-    real_dir = Path(args.real-dir).resolve() if hasattr(args, "real-dir") else Path(args.real_dir).resolve()
-    pred_dir = Path(args.pred-dir).resolve() if hasattr(args, "pred-dir") else Path(args.pred_dir).resolve()
+    truth_dir = Path(args.truth_dir).resolve()
+    pred_dir = Path(args.pred_dir).resolve()
 
-    if not real_dir.is_dir():
-        logger.error("real-dir does not exist or is not a directory: %s", real_dir)
+    if not truth_dir.is_dir():
+        logger.error("truth-dir does not exist or is not a directory: %s", truth_dir)
         raise SystemExit(1)
     if not pred_dir.is_dir():
         logger.error("pred-dir does not exist or is not a directory: %s", pred_dir)
@@ -453,7 +457,7 @@ def main():
         cmap = plt.get_cmap("viridis")
         norm = None
 
-    pairs = build_pairs(real_dir, pred_dir, args.start, args.end)
+    pairs = build_pairs(truth_dir, pred_dir, args.start, args.end)
     if not pairs:
         raise SystemExit(1)
 
