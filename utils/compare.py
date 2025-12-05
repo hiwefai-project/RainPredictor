@@ -484,12 +484,12 @@ def plot_sequence(
         # Annotate per-frame metrics on the left plot as text
         m = per_frame_metrics[row_idx]
         metric_text = (
-            f"RMSE={m['rmse']:.2f}
-"
-            f"MAE={m['mae']:.2f}
-"
-            f"Bias={m['bias']:.2f}
-"
+            f"RMSE={m['rmse']:.2f}"
+            
+            f"MAE={m['mae']:.2f}"
+            
+            f"Bias={m['bias']:.2f}"
+            
             f"R={m['corr']:.2f}"
         )
         ax_truth.text(
