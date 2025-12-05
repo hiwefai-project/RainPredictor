@@ -1,55 +1,48 @@
 
-# compare.py — Truth vs Prediction Radar Image Comparison
+# compare.py — Truth vs Prediction Radar Image Comparison Tool
 
-`compare.py` is a visualization utility for comparing **Radar Ground-Truth (Truth)** images with **Predicted** images produced by weather nowcasting models.  
-It loads TIFF/GeoTIFF files, extracts timestamps from filenames, aligns truth/pred pairs, and generates a vertical sequence plot with two columns:
-
-- **Left column:** Truth (ground truth radar reflectivity)
-- **Right column:** Prediction
-
-Each row represents a timestamp, and the script automatically determines correct ordering.
+`compare.py` is a comprehensive visualization and evaluation tool designed to compare **ground‑truth (Truth)** radar reflectivity fields against **Predicted** fields (typically produced by nowcasting models).  
+It generates side‑by‑side comparison panels, computes verification metrics, and optionally exports metrics to JSON for advanced post‑processing.
 
 ---
 
 ## ✨ Features
 
-- Extracts timestamps automatically (`YYYYMMDDZhhmm`)
-- Matches Truth and Pred pairs automatically
-- Sequence comparison from `--start` to `--end`
-- Supports **GeoTIFF** metadata (via `rasterio`)
-- Handles NaNs, NODATA values, constant fields safely
-- Optional **custom palette JSON** for color-mapped reflectivity (`--palette`)
-- Logging instead of print
-- Colorbar placed outside the image panel (no overlapping)
-- Works in both **interactive mode** and **save-to-file mode**
+- **Automatic timestamp extraction** (`YYYYMMDDZhhmm`)
+- **Truth vs Pred** comparison with two-column layout
+- **Landscape or Portrait orientation** (`--orientation`)
+- **Custom radar palette support** via JSON (`--palette`)
+- **Robust TIFF/GeoTIFF reader** (supports rasterio or PIL)
+- **NaN‑safe and inf‑safe rendering**
+- **Colorbar placed outside** image area (no overlap)
+- **Per-frame metrics**, including  
+  - RMSE  
+  - MSE  
+  - MAE  
+  - Bias  
+  - Correlation coefficient
+- **Overall metrics** across the full sequence
+- **Metrics panel** plotted below the images
+- **Optional JSON export** (`--metrics-json`) for post-processing
+- Logging support (`--log-level`)
 
 ---
 
-## 📦 Requirements
+## 📦 Installation Requirements
 
-One of:
-
-- `rasterio` (recommended)
-- `Pillow` (fallback)
-
-Plus:
-
-```
-numpy
-matplotlib
-```
-
-Install:
+Install dependencies:
 
 ```bash
-pip install rasterio pillow numpy matplotlib
+pip install numpy matplotlib rasterio pillow
 ```
+
+Rasterio is preferred for correct GeoTIFF handling.
 
 ---
 
 ## 🗂 Directory Structure
 
-Both truth and prediction directories must contain TIFF/GeoTIFF files named with timestamps, e.g.:
+Your dataset must contain TIFF/GeoTIFF radar images with timestamps in the filename:
 
 ```
 truth/
@@ -57,19 +50,15 @@ truth/
    rdr0_d01_20251202Z1820_VMI.tiff
    ...
 
-output/
+pred/
    rdr0_d01_20251202Z1810_pred.tiff
    rdr0_d01_20251202Z1820_pred.tiff
    ...
 ```
 
-Files do **not** need the same prefix or suffix — only the timestamp matters.
+Only the timestamp matters — filenames do not need to match otherwise.
 
----
-
-## 🧠 Timestamp Extraction
-
-A timestamp is automatically detected using the regular expression:
+Timestamp extraction uses:
 
 ```
 (\d{8}Z\d{4})
@@ -79,124 +68,146 @@ Example: `20251202Z1810`
 
 ---
 
-## 🚀 Basic Usage
+## 🎨 Using a Custom Radar Palette
 
-### Compare a full sequence
-
-```bash
-python compare.py \
-  --truth-dir truth \
-  --pred-dir output \
-  --title "First Train" \
-  --start 20251202Z1810 \
-  --end 20251202Z1900
-```
-
-### Save to a PNG file
-
-```bash
-python compare.py \
-  --truth-dir truth \
-  --pred-dir output \
-  --save comparison.png
-```
-
----
-
-## 🎨 Using a Custom Palette (Recommended for Radar dbZ)
-
-You may pass a JSON palette file, for example:
+Example `palette.json`:
 
 ```json
 {
   "levels": [-10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60],
-  "colors": [
-    "#646464","#04e9e7","#019ff4","#0300f4","#02fd02",
-    "#01c501","#008e00","#fdf802","#e5bc00","#fd9500",
-    "#fd0000","#d40000","#bc0000","#f800fd","#9854c6"
-  ],
+  "colors": ["#646464","#04e9e7","#019ff4","#0300f4","#02fd02","#01c501",
+             "#008e00","#fdf802","#e5bc00","#fd9500","#fd0000","#d40000",
+             "#bc0000","#f800fd","#9854c6"],
   "label": "Reflectivity (dBZ)"
 }
 ```
 
-Use it:
+Use it with:
 
 ```bash
-python compare.py \
-  --truth-dir truth \
-  --pred-dir output \
-  --palette palette.json \
-  --save compare.png
+--palette palette.json
 ```
 
-`compare.py` automatically builds a `ListedColormap` + `BoundaryNorm` from the palette.
-
 ---
 
-## 🛠 Command-Line Arguments
+## 🚀 Command Line Usage
 
-| Flag | Description |
-|------|-------------|
-| `--truth-dir` | Directory containing ground-truth radar TIFFs |
-| `--pred-dir` | Directory containing predicted radar TIFFs |
-| `--start` | First timestamp to include (inclusive) |
-| `--end` | Last timestamp to include (inclusive) |
-| `--title` | Title displayed above the plot |
-| `--save` | File path to save the figure (omit to view interactively) |
-| `--palette` | Path to a palette JSON file |
-| `--log-level` | DEBUG, INFO, WARNING, ERROR (default: INFO) |
-
----
-
-## 📜 Example Full Command
+### Basic comparison
 
 ```bash
 python compare.py \
   --truth-dir truth \
-  --pred-dir output \
-  --title "Nowcasting Comparison" \
+  --pred-dir pred
+```
+
+### With timestamps
+
+```bash
+python compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
   --start 20251202Z1810 \
-  --end 20251202Z1900 \
-  --palette palette.json \
-  --save 20251202Z1810-1900.png \
-  --log-level DEBUG
+  --end 20251202Z1900
+```
+
+### Save to file
+
+```bash
+--save output.png
+```
+
+### Orientation control
+
+```bash
+--orientation {landscape,portrait}
+```
+
+### Export metrics to JSON
+
+```bash
+--metrics-json metrics.json
 ```
 
 ---
 
-## 🖼 Output Figure
+## 📊 JSON Export Format
+
+The `--metrics-json` output looks like:
+
+```json
+{
+  "per_frame": [
+    {
+      "timestamp": "20251202Z1810",
+      "mse": 1.23,
+      "rmse": 1.11,
+      "mae": 0.85,
+      "bias": -0.10,
+      "corr": 0.92
+    }
+  ],
+  "overall": {
+    "mse": 1.10,
+    "rmse": 1.05,
+    "mae": 0.80,
+    "bias": -0.05,
+    "corr": 0.93
+  }
+}
+```
+
+Perfect for ingestion into pandas:
+
+```python
+import json
+import pandas as pd
+
+metrics = json.load(open("metrics.json"))
+df = pd.DataFrame(metrics["per_frame"])
+print(df)
+```
+
+---
+
+## 🖼 Example Output
 
 The generated figure contains:
 
-- A sequence of Truth vs Pred rows
-- A colorbar placed outside the right edge
-- Clean layout (no overlapping)
-- Optional radar reflectivity labels (from palette)
+- Left column: **Truth**
+- Right column: **Pred**
+- Per-frame metrics overlay
+- Bottom metrics graph (RMSE, MAE, Bias)
+- External colorbar with optional palette label
 
 ---
 
-## 🧩 Notes
+## 🧪 Recommended Workflow
 
-- Only timestamps present in **both** directories are included.
-- TIFFs with multiple bands use the **first band**.
-- NODATA values are converted to NaN when rasterio provides metadata.
-
----
-
-## 📄 License
-
-MIT License — free to use, modify, and integrate in research workflows.
+1. Compare sequences visually  
+2. Export metrics:  
+   ```bash
+   --metrics-json metrics.json
+   ```
+3. Analyze model performance across lead times  
+4. Tune model & architecture  
+5. Regenerate comparison to validate improvements
 
 ---
 
 ## 📬 Support
 
-If you need:
-- multi-panel layouts  
-- animated outputs  
-- automatic GIF/MP4 generation  
-- overlay of truth/pred heatmaps  
-- integration with training pipelines  
+If you want:
 
-I can extend the script for you.
+- GIF/MP4 animation support  
+- Difference heatmaps  
+- Skill score computation (CSI, POD, FAR, ETS)  
+- Multi-model comparison mode  
+
+Just ask — I can extend the tool.
+
+---
+
+## 📝 License
+
+MIT License
 
