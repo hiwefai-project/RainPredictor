@@ -8,14 +8,15 @@ for a sequence of timestamps, and compute quantitative verification metrics.
 Features
 --------
 - Sequence mode between --start and --end timestamps (YYYYMMDDZhhmm)
-- Truth vs Pred in 2 columns, one row per timestamp
+- Truth vs Pred visualization with two orientations:
+    * landscape: Truth row on top, Pred row below, frames arranged horizontally
+    * portrait: per-timestamp rows with Truth/Pred columns
 - Optional custom radar palette JSON (--palette)
 - Robust handling of NaN/inf and constant fields (no vmin > vmax crashes)
 - Logging instead of print
 - Colorbar placed outside the plot area to avoid overlapping images
 - Frame-by-frame and overall metrics (MSE, RMSE, MAE, Bias, Correlation)
 - Metrics panel plotted at the bottom of the figure
-- User-selectable figure orientation: landscape or portrait
 - Optional JSON dump with all per-frame and overall metrics (--metrics-json)
 """
 
@@ -356,14 +357,24 @@ def plot_sequence(
     metrics_json: Path | None = None,
 ):
     """
-    Plot a sequence of frame pairs (truth vs pred) as a 2-column figure.
-    Each row corresponds to a timestamp.
+    Plot a sequence of frame pairs (truth vs pred).
+
+    Orientation = 'landscape':
+        - Frames are arranged horizontally by timestamp (columns).
+        - First row: all Truth frames.
+        - Second row: all Pred frames.
+        - Third row: metrics graph.
+
+    Orientation = 'portrait':
+        - One row per timestamp.
+        - Two columns: Truth (left), Pred (right).
+        - Last row: metrics graph.
 
     If norm is provided (e.g. BoundaryNorm from a palette), it is used.
     Otherwise global vmin/vmax are computed and used.
 
-    Additionally, a bottom panel shows frame-by-frame metrics (RMSE, MAE, Bias),
-    and metrics can optionally be dumped to a JSON file for post-processing.
+    Metrics (RMSE, MAE, Bias) are visualized in a graph below the frames.
+    Metrics can optionally be dumped to a JSON file.
     """
     logger.info("Sequence mode: plotting %d frame pairs.", len(pairs))
 
@@ -431,80 +442,147 @@ def plot_sequence(
         logger.info("Metrics JSON successfully written.")
 
     # ------------------------------------------------------------------
-    # Figure layout using GridSpec: nframes rows for images + 1 row for metrics
+    # Figure layout using GridSpec
     # ------------------------------------------------------------------
     import matplotlib.gridspec as gridspec
 
-    # Orientation-dependent figure size
     if orientation == "landscape":
+        # Frames laid out horizontally by time:
+        # row 0: Truth, row 1: Pred, row 2: metrics
+        fig_width = max(10, 3 * nframes)
+        fig_height = 6
+        height_ratios = [1.0, 1.0, 0.7]
+
+        fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+        gs = gridspec.GridSpec(
+            nrows=3,
+            ncols=nframes,
+            figure=fig,
+            height_ratios=height_ratios,
+        )
+
+        axes_img = np.empty((2, nframes), dtype=object)
+        last_im = None
+
+        # Image panels: iterate by column (timestamp)
+        for col_idx, (ts, truth_data, pred_data) in enumerate(cached):
+            ax_truth = fig.add_subplot(gs[0, col_idx])
+            ax_pred = fig.add_subplot(gs[1, col_idx])
+            axes_img[0, col_idx] = ax_truth
+            axes_img[1, col_idx] = ax_pred
+
+            if norm is not None:
+                im_truth = ax_truth.imshow(truth_data, cmap=cmap, norm=norm)
+                im_pred = ax_pred.imshow(pred_data, cmap=cmap, norm=norm)
+            else:
+                im_truth = ax_truth.imshow(
+                    truth_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+                )
+                im_pred = ax_pred.imshow(
+                    pred_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+                )
+
+            # Column-level timestamp as title on the Truth row
+            ax_truth.set_title(ts, fontsize=9)
+
+            # Label rows once on the leftmost column for clarity
+            if col_idx == 0:
+                ax_truth.set_ylabel("Truth", fontsize=9)
+                ax_pred.set_ylabel("Pred", fontsize=9)
+
+            ax_truth.axis("off")
+            ax_pred.axis("off")
+
+            # Annotate per-frame metrics on the Truth panel
+            m = per_frame_metrics[col_idx]
+            metric_text = (
+                f"RMSE={m['rmse']:.2f}\n"
+                f"MAE={m['mae']:.2f}\n"
+                f"Bias={m['bias']:.2f}\n"
+                f"R={m['corr']:.2f}"
+            )
+            ax_truth.text(
+                0.01,
+                0.02,
+                metric_text,
+                transform=ax_truth.transAxes,
+                fontsize=7,
+                va="bottom",
+                ha="left",
+                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            )
+
+            last_im = im_pred or im_truth
+
+        # Metrics panel: bottom row, spanning all columns
+        ax_metrics = fig.add_subplot(gs[2, :])
+
+    else:
+        # Portrait: one row per timestamp, 2 columns (Truth, Pred), last row metrics
         fig_width = 10
         fig_height = max(4, 2 * nframes + 2)
-    else:  # portrait
-        fig_width = 7
-        fig_height = max(6, 3 * nframes + 3)
+        height_ratios = [1.0] * nframes + [0.6]
 
-    height_ratios = [1.0] * nframes + [0.6]
-
-    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = gridspec.GridSpec(
-        nrows=nframes + 1,
-        ncols=2,
-        figure=fig,
-        height_ratios=height_ratios,
-    )
-
-    axes_img = np.empty((nframes, 2), dtype=object)
-
-    last_im = None
-
-    # Image panels
-    for row_idx, (ts, truth_data, pred_data) in enumerate(cached):
-        ax_truth = fig.add_subplot(gs[row_idx, 0])
-        ax_pred = fig.add_subplot(gs[row_idx, 1])
-        axes_img[row_idx, 0] = ax_truth
-        axes_img[row_idx, 1] = ax_pred
-
-        if norm is not None:
-            im_truth = ax_truth.imshow(truth_data, cmap=cmap, norm=norm)
-            im_pred = ax_pred.imshow(pred_data, cmap=cmap, norm=norm)
-        else:
-            im_truth = ax_truth.imshow(
-                truth_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
-            )
-            im_pred = ax_pred.imshow(
-                pred_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
-            )
-
-        ax_truth.set_title(f"Truth {ts}")
-        ax_pred.set_title(f"Pred {ts}")
-
-        ax_truth.axis("off")
-        ax_pred.axis("off")
-
-        # Annotate per-frame metrics on the left plot as text
-        m = per_frame_metrics[row_idx]
-        metric_text = (
-            f"RMSE={m['rmse']:.2f}\n"
-            f"MAE={m['mae']:.2f}\n"
-            f"Bias={m['bias']:.2f}\n"
-            f"R={m['corr']:.2f}"
-        )
-        ax_truth.text(
-            0.01,
-            0.02,
-            metric_text,
-            transform=ax_truth.transAxes,
-            fontsize=8,
-            va="bottom",
-            ha="left",
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+        fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+        gs = gridspec.GridSpec(
+            nrows=nframes + 1,
+            ncols=2,
+            figure=fig,
+            height_ratios=height_ratios,
         )
 
-        last_im = im_pred or im_truth
+        axes_img = np.empty((nframes, 2), dtype=object)
+        last_im = None
 
-    # Metrics panel (bottom row, spanning both columns)
-    ax_metrics = fig.add_subplot(gs[-1, :])
+        # Image panels: iterate by row (timestamp)
+        for row_idx, (ts, truth_data, pred_data) in enumerate(cached):
+            ax_truth = fig.add_subplot(gs[row_idx, 0])
+            ax_pred = fig.add_subplot(gs[row_idx, 1])
+            axes_img[row_idx, 0] = ax_truth
+            axes_img[row_idx, 1] = ax_pred
 
+            if norm is not None:
+                im_truth = ax_truth.imshow(truth_data, cmap=cmap, norm=norm)
+                im_pred = ax_pred.imshow(pred_data, cmap=cmap, norm=norm)
+            else:
+                im_truth = ax_truth.imshow(
+                    truth_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+                )
+                im_pred = ax_pred.imshow(
+                    pred_data, cmap=cmap, vmin=global_vmin, vmax=global_vmax
+                )
+
+            ax_truth.set_title(f"Truth {ts}")
+            ax_pred.set_title(f"Pred {ts}")
+
+            ax_truth.axis("off")
+            ax_pred.axis("off")
+
+            # Annotate per-frame metrics on the Truth panel
+            m = per_frame_metrics[row_idx]
+            metric_text = (
+                f"RMSE={m['rmse']:.2f}\n"
+                f"MAE={m['mae']:.2f}\n"
+                f"Bias={m['bias']:.2f}\n"
+                f"R={m['corr']:.2f}"
+            )
+            ax_truth.text(
+                0.01,
+                0.02,
+                metric_text,
+                transform=ax_truth.transAxes,
+                fontsize=8,
+                va="bottom",
+                ha="left",
+                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            )
+
+            last_im = im_pred or im_truth
+
+        # Metrics panel: bottom row, spanning both columns
+        ax_metrics = fig.add_subplot(gs[-1, :])
+
+    # Metrics graph (common to both orientations)
     frame_labels = [ts[-4:] for ts, _, _ in cached]  # use hhmm as short label
     rmse_vals = [m["rmse"] for m in per_frame_metrics]
     mae_vals = [m["mae"] for m in per_frame_metrics]
@@ -628,7 +706,8 @@ def parse_args():
         choices=["landscape", "portrait"],
         default="landscape",
         help=(
-            "Figure orientation: 'landscape' (wide) or 'portrait' (tall). "
+            "Figure orientation: 'landscape' (Truth row, Pred row, metrics below) "
+            "or 'portrait' (one row per timestamp, metrics at bottom). "
             "Default: landscape."
         ),
     )
