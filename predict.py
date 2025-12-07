@@ -72,9 +72,12 @@ def load_model(checkpoint_path: str, device: torch.device, pred_length: int) -> 
 
     # Instantiate model with same hyperparameters as in train.py
     model = RainPredRNN(
-        input_dim=1,
-        num_hidden=256,
-        max_hidden_channels=128,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=64,
+        transformer_d_model=128,
+        transformer_nhead=8,
+        transformer_num_layers=2,
         pred_length=pred_length,
     )
     model.load_state_dict(state_dict, strict=False)
