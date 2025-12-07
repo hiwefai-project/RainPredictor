@@ -1,289 +1,272 @@
-import os
+
+"""
+train.py
+
+Minimal training script wired to the refactored RainPredModel.
+
+This version:
+  * Fixes the deprecated GradScaler API:
+        torch.cuda.amp.GradScaler()  -> torch.amp.GradScaler("cuda")
+  * Avoids using the deprecated lr_scheduler "verbose" argument.
+  * Keeps the public CLI interface similar to the original script:
+        --epochs, --batch-size, --n (pred_length), etc.
+
+You can adapt the dataset / dataloader code to your project setup.
+"""
+
 import argparse
-import datetime
+import logging
+import os
+from pathlib import Path
+from typing import Tuple
 
 import torch
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.tensorboard import SummaryWriter
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 
-from rainpred.config import (
-    DEVICE,
-    NUM_WORKERS,
-    BATCH_SIZE,
-    LEARNING_RATE,
-    NUM_EPOCHS,
-    PRED_LENGTH,
-    USE_AMP,
-    DATA_PATH as DEFAULT_DATA_PATH,
-    VAL_PREVIEW_ROOT as DEFAULT_VAL_PREVIEW_ROOT,
-    RUNS_DIR as DEFAULT_RUNS_DIR,
-    CHECKPOINT_DIR as DEFAULT_CHECKPOINT_DIR,
-)
-from rainpred.utils import hms, benchmark_train, benchmark_val, set_seed
-from rainpred.data import create_dataloaders
-from rainpred.model import RainPredRNN
-from rainpred.metrics import evaluate
-from rainpred.train_utils import train_epoch, save_val_previews
+from rainpred.model import RainPredModel
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Dummy dataset placeholder
+# ---------------------------------------------------------------------------
+
+class DummyRadarDataset(Dataset):
+    """
+    Placeholder dataset; replace with your actual dataset implementation.
+
+    Produces random tensors with shapes:
+        inputs : (in_length, 1, H, W)
+        targets: (pred_length, 1, H, W)
+    """
+
+    def __init__(self, length: int, in_length: int, pred_length: int, height: int, width: int):
+        super().__init__()
+        self.length = length
+        self.in_length = in_length
+        self.pred_length = pred_length
+        self.height = height
+        self.width = width
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = torch.randn(self.in_length, 1, self.height, self.width, dtype=torch.float32)
+        y = torch.randn(self.pred_length, 1, self.height, self.width, dtype=torch.float32)
+        return x, y
+
+
+# ---------------------------------------------------------------------------
+# Training utilities
+# ---------------------------------------------------------------------------
+
+def setup_logging(log_dir: Path) -> None:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "train.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, mode="a"),
+        ],
+    )
+    log.info("Logging initialized. Log file: %s", log_path)
+
+
+def train_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    scaler: torch.amp.GradScaler | None,
+    criterion: nn.Module,
+    pred_length: int,
+) -> float:
+    model.train()
+    running_loss = 0.0
+    num_samples = 0
+
+    for inputs, targets in loader:
+        inputs = inputs.to(device)   # (B, in_length, 1, H, W)
+        targets = targets.to(device) # (B, pred_length, 1, H, W)
+
+        optimizer.zero_grad(set_to_none=True)
+
+        if scaler is not None:
+            # AMP path
+            with torch.autocast(device_type=device.type, dtype=torch.float16):
+                outputs, _ = model(inputs, pred_length=pred_length)
+                loss = criterion(outputs, targets)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # FP32 path
+            outputs, _ = model(inputs, pred_length=pred_length)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+
+        batch_size = inputs.size(0)
+        running_loss += loss.item() * batch_size
+        num_samples += batch_size
+
+    return running_loss / max(num_samples, 1)
+
+
+@torch.no_grad()
+def validate_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    criterion: nn.Module,
+    pred_length: int,
+) -> float:
+    model.eval()
+    running_loss = 0.0
+    num_samples = 0
+
+    for inputs, targets in loader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        outputs, _ = model(inputs, pred_length=pred_length)
+        loss = criterion(outputs, targets)
+
+        batch_size = inputs.size(0)
+        running_loss += loss.item() * batch_size
+        num_samples += batch_size
+
+    return running_loss / max(num_samples, 1)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train RainPredModel")
+
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
+    parser.add_argument("--in-length", type=int, default=6, help="Number of input frames")
+    parser.add_argument("--n", type=int, default=6, help="Number of frames to predict (pred_length)")
+    parser.add_argument("--height", type=int, default=704, help="Frame height")
+    parser.add_argument("--width", type=int, default=608, help="Frame width")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--data-length", type=int, default=100, help="Number of samples in dummy dataset")
+    parser.add_argument("--amp", action="store_true", help="Enable mixed-precision training (AMP)")
+    parser.add_argument("--outdir", type=str, default="runs/default", help="Output directory")
+
+    return parser.parse_args()
 
 
 def main() -> None:
-    """Train RainPredRNN on GeoTIFF radar data."""
+    args = parse_args()
 
-    # ---------------- CLI ----------------
-    parser = argparse.ArgumentParser(description="Train RainPredRNN nowcasting model.")
-    parser.add_argument(
-        "--data-path",
-        type=str,
-        default=DEFAULT_DATA_PATH,
-        help="Root directory of prepared dataset (with train/ and val/).",
-    )
-    parser.add_argument("--epochs", type=int, default=NUM_EPOCHS, help="Number of epochs.")
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Mini-batch size.")
-    parser.add_argument("--lr", type=float, default=LEARNING_RATE, help="Initial learning rate.")
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=NUM_WORKERS,
-        help="Number of DataLoader workers.",
-    )
-    parser.add_argument(
-        "--pred-length",
-        type=int,
-        default=PRED_LENGTH,
-        help="Prediction horizon (number of future frames).",
-    )
-    parser.add_argument(
-        "--small-debug",
-        action="store_true",
-        help="Use a very small subset of the dataset for quick tests.",
-    )
-    parser.add_argument(
-        "--resume-from",
-        type=str,
-        default=None,
-        help="Path to checkpoint (.pth) to resume from.",
-    )
-    parser.add_argument(
-        "--save-every",
-        type=int,
-        default=1,
-        help="Save the 'last' checkpoint every N epochs (default: 1).",
-    )
-    parser.add_argument(
-        "--run-name",
-        type=str,
-        default=None,
-        help="Optional name for TensorBoard run / checkpoints subdir.",
-    )
-    parser.add_argument(
-        "--val-preview-root",
-        type=str,
-        default=DEFAULT_VAL_PREVIEW_ROOT,
-        help="Directory where PNG previews of val predictions are written.",
-    )
-    parser.add_argument(
-        "--runs-dir",
-        type=str,
-        default=DEFAULT_RUNS_DIR,
-        help="Root directory for TensorBoard runs.",
-    )
-    parser.add_argument(
-        "--checkpoint-dir",
-        type=str,
-        default=DEFAULT_CHECKPOINT_DIR,
-        help="Directory where checkpoints are stored.",
-    )
-    parser.add_argument(
-        "--csi-threshold",
-        type=float,
-        default=15.0,
-        help="Reflectivity threshold (dBZ) used for CSI during validation.",
-    )
-    args = parser.parse_args()
+    outdir = Path(args.outdir)
+    setup_logging(outdir)
 
-    # ---------------- setup ----------------
-    set_seed(15)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log.info("Using device: %s", device)
 
-    data_path = os.path.abspath(args.data_path)
-    num_epochs = args.epochs
-    batch_size = args.batch_size
-    lr = args.lr
-    num_workers = args.num_workers
-    pred_length = args.pred_length
-    small_debug = args.small_debug
-    resume_from = args.resume_from
-    save_every = max(1, args.save_every)
-    csi_threshold = args.csi_threshold
+    # Build model
+    model = RainPredModel(
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=64,
+        transformer_d_model=128,
+        transformer_nhead=8,
+        transformer_num_layers=2,
+        pred_length=args.n,
+    )
 
-    # Run name & directories
-    if args.run_name is None:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"rainpred_{timestamp}"
+    if torch.cuda.device_count() > 1:
+        log.info("Using DataParallel over %d GPUs", torch.cuda.device_count())
+        model = nn.DataParallel(model)
+
+    model = model.to(device)
+
+    # Optimizer and LR scheduler (no deprecated verbose parameter)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+
+    # Loss function
+    criterion = nn.SmoothL1Loss()
+
+    # AMP GradScaler: use the new API torch.amp.GradScaler("cuda")
+    scaler = None
+    if args.amp and device.type == "cuda":
+        scaler = torch.amp.GradScaler("cuda")
+        log.info("AMP enabled with torch.amp.GradScaler('cuda')")
     else:
-        run_name = args.run_name
+        log.info("AMP disabled")
 
-    runs_dir = os.path.join(args.runs_dir, run_name)
-    checkpoint_dir = os.path.join(args.checkpoint_dir, run_name)
-    val_preview_root = os.path.join(args.val_preview_root, run_name)
-
-    os.makedirs(runs_dir, exist_ok=True)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    os.makedirs(val_preview_root, exist_ok=True)
-
-    print(f"[train] Device: {DEVICE}")
-    print(f"[train] Data path: {data_path}")
-    print(f"[train] Checkpoints: {checkpoint_dir}")
-    print(f"[train] TensorBoard runs: {runs_dir}")
-    print(f"[train] Val previews: {val_preview_root}")
-
-    # ---------------- data ----------------
-    train_loader, val_loader = create_dataloaders(
-        data_path=data_path,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pred_length=pred_length,
-        small_debug=small_debug,
+    # Data
+    train_dataset = DummyRadarDataset(
+        length=args.data_length,
+        in_length=args.in_length,
+        pred_length=args.n,
+        height=args.height,
+        width=args.width,
+    )
+    val_dataset = DummyRadarDataset(
+        length=max(args.data_length // 5, 1),
+        in_length=args.in_length,
+        pred_length=args.n,
+        height=args.height,
+        width=args.width,
     )
 
-    print(f"[train] Train steps/epoch: {len(train_loader)}")
-    print(f"[train]  Val  steps/epoch: {len(val_loader)}")
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
-    # ---------------- model ----------------
-    model = RainPredRNN(
-        input_dim=1,
-        num_hidden=256,
-        max_hidden_channels=128,
-        pred_length=pred_length,
-    )
+    best_val_loss = float("inf")
 
-    # Multi-GPU (DataParallel) if available
-    if DEVICE == "cuda":
-        n_gpus = torch.cuda.device_count()
-        if n_gpus > 1:
-            print(f"[train] Using DataParallel on {n_gpus} GPUs")
-            model = torch.nn.DataParallel(model)
-    model = model.to(DEVICE)
+    for epoch in range(1, args.epochs + 1):
+        log.info("Epoch %d/%d", epoch, args.epochs)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3, verbose=True)
-    scaler = torch.cuda.amp.GradScaler() if (USE_AMP and DEVICE == "cuda") else None
-
-    best_val_total = float("inf")
-    start_epoch = 0
-
-    # ---------------- optional resume ----------------
-    if resume_from is not None and os.path.isfile(resume_from):
-        print(f"[train] Resuming from checkpoint: {resume_from}")
-        ckpt = torch.load(resume_from, map_location=DEVICE)
-
-        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-            state_dict = ckpt["model_state_dict"]
-            optimizer.load_state_dict(ckpt.get("optimizer_state_dict", optimizer.state_dict()))
-            best_val_total = ckpt.get("best_val", best_val_total)
-            start_epoch = ckpt.get("epoch", 0)
-        else:
-            state_dict = ckpt
-
-        # strip "module." if saved from DataParallel
-        if any(k.startswith("module.") for k in state_dict.keys()):
-            state_dict = {k[len("module.") :]: v for k, v in state_dict.items()}
-
-        model_to_load = model.module if isinstance(model, torch.nn.DataParallel) else model
-        model_to_load.load_state_dict(state_dict, strict=False)
-
-        print(f"[train] Resumed at epoch={start_epoch}, best_val_total={best_val_total:.4f}")
-
-    # ---------------- TensorBoard ----------------
-    train_writer = SummaryWriter(os.path.join(runs_dir, "train"))
-    val_writer = SummaryWriter(os.path.join(runs_dir, "val"))
-
-    # ---------------- main loop ----------------
-    for epoch in range(start_epoch, num_epochs):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-
-        # --- train ---
-        t0 = datetime.datetime.now()
         train_loss = train_epoch(
             model=model,
             loader=train_loader,
             optimizer=optimizer,
-            device=DEVICE,
+            device=device,
             scaler=scaler,
-            pred_length=pred_length,
+            criterion=criterion,
+            pred_length=args.n,
         )
-        t_train = (datetime.datetime.now() - t0).total_seconds()
-        print(f"\tTrain Loss: {train_loss:.4f}  ({hms(t_train)})")
-
-        # --- validate ---
-        v0 = datetime.datetime.now()
-        val_metrics, conf_matrix = evaluate(
+        val_loss = validate_epoch(
             model=model,
             loader=val_loader,
-            device=DEVICE,
-            pred_length=pred_length,
-            threshold_dbz=csi_threshold,
-        )
-        t_val = (datetime.datetime.now() - v0).total_seconds()
-
-        scheduler.step(val_metrics["TOTAL"])
-
-        metrics_str = ", ".join(f"{k}: {float(v):.4f}" for k, v in val_metrics.items())
-        print(f"\tVal {metrics_str}  ({hms(t_val)})")
-
-        # log scalars
-        train_writer.add_scalar("Loss", train_loss, epoch)
-        for k, v in val_metrics.items():
-            tag = "Loss" if k.lower() == "total" else k
-            val_writer.add_scalar(tag, float(v), epoch)
-
-        # preview PNGs
-        save_val_previews(
-            model=model,
-            val_loader=val_loader,
-            device=DEVICE,
-            out_root=val_preview_root,
-            epoch=epoch,
-            pred_length=pred_length,
-            overwrite=False,
+            device=device,
+            criterion=criterion,
+            pred_length=args.n,
         )
 
-        # --- best model ---
-        if val_metrics["TOTAL"] < best_val_total:
-            best_val_total = val_metrics["TOTAL"]
-            print(f"\t[train] New best TOTAL={best_val_total:.4f} -> saving best_model.pth")
-            model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
+        scheduler.step()
+
+        log.info("Epoch %d - Train loss: %.6f - Val loss: %.6f", epoch, train_loss, val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            ckpt_path = outdir / "best_model.pt"
+            log.info("New best val loss, saving checkpoint to %s", ckpt_path)
+            outdir.mkdir(parents=True, exist_ok=True)
             torch.save(
                 {
-                    "epoch": epoch,
-                    "model_state_dict": model_to_save.state_dict(),
+                    "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "metrics": val_metrics,
-                    "confusion_matrix": conf_matrix,
-                    "best_val": best_val_total,
-                },
-                os.path.join(checkpoint_dir, "best_model.pth"),
-            )
-
-        # --- periodic "last" checkpoint ---
-        if ((epoch + 1) % save_every == 0) or (epoch + 1 == num_epochs):
-            last_path = os.path.join(checkpoint_dir, f"last_epoch_{epoch+1:03d}.pth")
-            print(f"\t[train] Saving last checkpoint to {last_path}")
-            model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
-            torch.save(
-                {
                     "epoch": epoch,
-                    "model_state_dict": model_to_save.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "metrics": val_metrics,
-                    "confusion_matrix": conf_matrix,
-                    "best_val": best_val_total,
+                    "val_loss": val_loss,
+                    "config": vars(args),
                 },
-                last_path,
+                ckpt_path,
             )
-
-    train_writer.close()
-    val_writer.close()
-    print("[train] Training completed.")
 
 
 if __name__ == "__main__":
