@@ -150,9 +150,12 @@ def main() -> None:
 
     # ---------------- model ----------------
     model = RainPredModel(
-        input_dim=1,
-        num_hidden=256,
-        max_hidden_channels=128,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=64,
+        transformer_d_model=128,
+        transformer_nhead=8,
+        transformer_num_layers=2,
         pred_length=pred_length,
     )
 
@@ -165,8 +168,8 @@ def main() -> None:
     model = model.to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3, verbose=True)
-    scaler = torch.cuda.amp.GradScaler() if (USE_AMP and DEVICE == "cuda") else None
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
+    scaler = torch.amp.GradScaler('cuda') if (USE_AMP and DEVICE == "cuda") else None
 
     best_val_total = float("inf")
     start_epoch = 0
