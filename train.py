@@ -149,7 +149,7 @@ def main() -> None:
     print(f"[train]  Val  steps/epoch: {len(val_loader)}")
 
     # ---------------- model ----------------
-    model = RainPredRNN(
+    model = RainPredModel(
         input_dim=1,
         num_hidden=256,
         max_hidden_channels=128,
