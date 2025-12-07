@@ -14,6 +14,11 @@ from rasterio.errors import RasterioIOError
 
 import torchio as tio
 
+import logging  # Logging library for debug/info messages
+
+# Create a module-level logger
+logger = logging.getLogger(__name__)
+
 from .config import PIN_MEMORY, PRED_LENGTH, PATCH_HEIGHT, PATCH_WIDTH
 from .utils import set_seed
 
@@ -102,7 +107,7 @@ class RadarDataset(Dataset):
                     else:
                         valid = tiff_is_readable_quick(f)
                         if not valid:
-                            print(f"Invalid file (read fail): {f}")
+                            logger.warning(f"Invalid file (read fail): {f}")  # Log unreadable file
                     self.file_validity[f] = valid
                 if not self.file_validity[f]:
                     ok = False
@@ -119,13 +124,13 @@ class RadarDataset(Dataset):
         self.valid_windows = len(self.valid_indices)
         self.invalid_windows = self.total_possible_windows - self.valid_windows
 
-        print(f"\nDataset stats ({'train' if is_train else 'val'}):")
-        print(f"1. Total files: {self.total_files}")
-        print(f"2. Invalid files: {self.invalid_files}")
-        print(f"3. Total windows: {self.total_possible_windows}")
-        print(f"4. Valid windows: {self.valid_windows}")
-        print(f"5. Invalid windows: {self.invalid_windows}")
-        print("===============================================\n")
+        logger.info(f"\nDataset stats ({'train' if is_train else 'val'}):")  # Log dataset statistics header
+        logger.info(f"1. Total files: {self.total_files}")  # Log total number of files
+        logger.info(f"2. Invalid files: {self.invalid_files}")  # Log count of invalid files
+        logger.info(f"3. Total windows: {self.total_possible_windows}")  # Log total sliding windows
+        logger.info(f"4. Valid windows: {self.valid_windows}")  # Log how many windows are usable
+        logger.info(f"5. Invalid windows: {self.invalid_windows}")  # Log how many windows are discarded
+        logger.info("===============================================\n")  # Visual separator in logs
 
     def __len__(self) -> int:
         return len(self.valid_indices)
