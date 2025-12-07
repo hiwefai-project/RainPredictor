@@ -6,7 +6,7 @@ from typing import List
 
 import torch
 
-from rainpred.model import RainPredRNN
+from rainpred.model import RainPredModel
 from rainpred.geo_io import load_sequence_from_dir, save_predictions_as_geotiff
 
 
@@ -49,7 +49,7 @@ def load_model(checkpoint_path: str, device: torch.device, pred_length: int) -> 
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
     print(f"[predict] Loading checkpoint from: {checkpoint_path}")
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only = False)
 
     # Extract a state_dict from various checkpoint formats
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
@@ -71,7 +71,7 @@ def load_model(checkpoint_path: str, device: torch.device, pred_length: int) -> 
         state_dict = {k[len("module."):] : v for k, v in state_dict.items()}
 
     # Instantiate model with same hyperparameters as in train.py
-    model = RainPredRNN(
+    model = RainPredModel(
         in_channels=1,
         out_channels=1,
         hidden_channels=64,
@@ -203,6 +203,13 @@ def parse_args() -> argparse.Namespace:
         help="Directory where predicted GeoTIFFs will be written.",
     )
     parser.add_argument(
+        "-m",
+        "--m",
+        type=int,
+        default=18,
+        help="Number of past frames.",
+    )
+    parser.add_argument(
         "-n",
         "--n",
         type=int,
@@ -224,7 +231,7 @@ def main() -> None:
     print(f"[predict] Using device: {device}")
 
     # Load input sequence and metadata
-    seq, paths, shape_info, meta = load_sequence_from_dir(args.input_dir)
+    seq, paths, shape_info, meta = load_sequence_from_dir(args.input_dir, args.m)
     print(f"[predict] Loaded sequence with {seq.shape[1]} frames from {args.input_dir}")
 
     # Instantiate and load model
