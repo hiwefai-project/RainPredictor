@@ -21,7 +21,7 @@ from rainpred.config import (
 )
 from rainpred.utils import hms, benchmark_train, benchmark_val, set_seed
 from rainpred.data import create_dataloaders
-from rainpred.model import RainPredRNN
+from rainpred.model import RainPredModel
 from rainpred.metrics import evaluate
 from rainpred.train_utils import train_epoch, save_val_previews
 
