@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import argparse
+import logging  # Use structured logging for script output.
 import math
 import pandas as pd
 import numpy as np
@@ -10,6 +11,15 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 METRIC_BLOCK = ["TOTAL","SmoothL1","MAE","FL","SSIM"]
 DERIVED = ["Precision","Recall","F1","CSI","FAR","HSS","ETS"]
+
+
+def setup_logging() -> logging.Logger:
+    """Configure logging and return the module logger."""  # Describe logging setup.
+    logging.basicConfig(  # Configure the root logger once.
+        level=logging.INFO,  # Default to INFO for progress updates.
+        format="%(asctime)s [%(levelname)s] %(message)s",  # Use a clear log format.
+    )
+    return logging.getLogger(__name__)  # Return a module-scoped logger.
 
 def _ensure_dir(p):
     os.makedirs(p, exist_ok=True)
@@ -130,12 +140,29 @@ def to_markdown_table(df, floatfmt="{:.4f}"):
     return "\n".join(lines)
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--logdir", required=True, help="Cartella run (contiene metrics_per_epoch.csv)")
-    ap.add_argument("--csv", default=None, help="Override path CSV (se diverso)")
-    ap.add_argument("--outdir", default=None, help="Dove salvare report (default: <logdir>/report)")
-    ap.add_argument("--title", default="Training Report", help="Titolo per i grafici/PDF")
-    args = ap.parse_args()
+    logger = setup_logging()  # Initialize logging for the script.
+    ap = argparse.ArgumentParser()  # Build an argument parser.
+    ap.add_argument(  # Add required log directory argument.
+        "--logdir",  # CLI flag name.
+        required=True,  # Require the argument for execution.
+        help="Cartella run (contiene metrics_per_epoch.csv)",  # Describe expected input.
+    )
+    ap.add_argument(  # Add optional CSV override argument.
+        "--csv",  # CLI flag name.
+        default=None,  # Default to the logdir CSV if unspecified.
+        help="Override path CSV (se diverso)",  # Describe behavior.
+    )
+    ap.add_argument(  # Add optional output directory argument.
+        "--outdir",  # CLI flag name.
+        default=None,  # Default to <logdir>/report if unspecified.
+        help="Dove salvare report (default: <logdir>/report)",  # Describe output location.
+    )
+    ap.add_argument(  # Add optional title argument.
+        "--title",  # CLI flag name.
+        default="Training Report",  # Default title for plots and PDF.
+        help="Titolo per i grafici/PDF",  # Describe the plot title usage.
+    )
+    args = ap.parse_args()  # Parse CLI arguments into a namespace.
 
     csv_path = args.csv or os.path.join(args.logdir, "metrics_per_epoch.csv")
     outdir = args.outdir or os.path.join(args.logdir, "report")
@@ -144,8 +171,10 @@ def main():
     df = load_csv(csv_path)
     thresholds = infer_thresholds(df)
     if not thresholds:
-        print("Nessuna soglia dBZ trovata nel CSV (colonne tipo '<thr>dBZ_TP'). Esco.")
-        return
+        logger.warning(  # Log a warning when thresholds are missing.
+            "Nessuna soglia dBZ trovata nel CSV (colonne tipo '<thr>dBZ_TP'). Esco."
+        )
+        return  # Exit early when no thresholds are found.
 
     # PDF multipagina
     pdf_path = os.path.join(outdir, "report_plots.pdf")
@@ -159,8 +188,10 @@ def main():
     # 3) Best epoch su validation (TOTAL minimo)
     be = best_epoch_by_val_total(df)
     if be is None:
-        print("Impossibile determinare il best epoch (nessuna riga 'val').")
-        return
+        logger.warning(  # Warn when no validation rows exist.
+            "Impossibile determinare il best epoch (nessuna riga 'val')."
+        )
+        return  # Exit early because best epoch cannot be determined.
 
     best_tbl = make_best_epoch_table(df, thresholds, be)
 
@@ -178,10 +209,10 @@ def main():
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md))
 
-    print("Report creato:")
-    print(" - PDF:", pdf_path)
-    print(" - Best-epoch CSV:", best_csv)
-    print(" - Markdown:", md_path)
+    logger.info("Report creato:")  # Announce report creation.
+    logger.info(" - PDF: %s", pdf_path)  # Log PDF output path.
+    logger.info(" - Best-epoch CSV: %s", best_csv)  # Log CSV output path.
+    logger.info(" - Markdown: %s", md_path)  # Log Markdown output path.
 
 if __name__ == "__main__":
     main()
