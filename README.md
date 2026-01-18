@@ -10,6 +10,17 @@ This project implements a radar nowcasting model (`RainPredRNN`) that:
   - `predict.py` for m→n inference,
   - `compare.py` for quick visual comparison in lon/lat.
 
+## Documentation
+
+- [Training guide](docs/train.md) — end-to-end training workflow and experiment notes.
+- [Inference guide](docs/predict.md) — minimal inference-only usage for RainPredRNN.
+- [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics.
+- [Dataset downloader](docs/download_dataset.md) — fetch radar GeoTIFF sequences from a base URL.
+- [Dataset splitter](docs/make_splits.md) — create train/val/test splits for GeoTIFF datasets.
+- [Radar metadata inspector](docs/radar_info.md) — inspect VMI GeoTIFF values and stats.
+- [Radar viewer](docs/radar_viewer.md) — visualize radar TIFF/GeoTIFF files with LUTs.
+- [Sequence selector](docs/select_sequences.md) — scan datasets and select GeoTIFF sequences.
+
 ## 1. Example Radar-style Naming
 
 Example input frames:
