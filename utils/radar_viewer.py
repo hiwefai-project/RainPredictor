@@ -12,11 +12,24 @@ and dBZ intervals defined in an external JSON palette file.
 import argparse
 from pathlib import Path
 import json
+import logging  # Provide structured logging output.
 
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
+
+def setup_logging() -> logging.Logger:
+    """Configure logging and return the module logger."""  # Describe logging helper.
+    logging.basicConfig(  # Configure root logger once.
+        level=logging.INFO,  # Default to INFO for user-facing output.
+        format="%(asctime)s [%(levelname)s] %(message)s",  # Provide consistent log format.
+    )
+    return logging.getLogger(__name__)  # Return a module-level logger.
+
+
+logger = logging.getLogger(__name__)  # Create a module-scoped logger.
+
 
 # Try to import rasterio for GeoTIFF support
 try:
@@ -66,9 +79,11 @@ def load_palette_from_json(path: Path):
     label = palette_data.get("label", "Reflectivity (dBZ)")
 
     if not (len(colors) == len(levels) or len(colors) == len(levels) - 1):
-        print(
-            f"Warning: palette JSON '{path}' has {len(colors)} colors and "
-            f"{len(levels)} levels. Check if this is intended."
+        logger.warning(  # Warn when palette sizes mismatch.
+            "Warning: palette JSON '%s' has %s colors and %s levels. Check if this is intended.",  # Log template.
+            path,  # Include palette path.
+            len(colors),  # Include color count.
+            len(levels),  # Include level count.
         )
 
     cmap = ListedColormap(colors)
@@ -99,12 +114,18 @@ def load_raster(path: Path, band: int):
         try:
             with rasterio.open(path) as src:
                 # Print metadata
-                print(f"GeoTIFF detected: {path.name}")
-                print(f"  CRS: {src.crs}")
-                print(f"  Resolution: {src.res}")
-                print(
-                    f"  Bounds: left={src.bounds.left}, right={src.bounds.right}, "
-                    f"bottom={src.bounds.bottom}, top={src.bounds.top}"
+                logger.info(  # Log GeoTIFF detection message.
+                    "GeoTIFF detected: %s",  # Log template.
+                    path.name,  # Include the file name.
+                )
+                logger.info("  CRS: %s", src.crs)  # Log CRS metadata.
+                logger.info("  Resolution: %s", src.res)  # Log resolution metadata.
+                logger.info(  # Log the bounds metadata.
+                    "  Bounds: left=%s, right=%s, bottom=%s, top=%s",  # Log template.
+                    src.bounds.left,  # Log left bound.
+                    src.bounds.right,  # Log right bound.
+                    src.bounds.bottom,  # Log bottom bound.
+                    src.bounds.top,  # Log top bound.
                 )
 
                 # Read selected band (1-based index)
@@ -115,8 +136,13 @@ def load_raster(path: Path, band: int):
                 extent = (bounds.left, bounds.right, bounds.bottom, bounds.top)
                 return data, extent
         except Exception as e:
-            print(f"Warning: rasterio failed to open '{path}' as GeoTIFF or read band {band}: {e}")
-            print("Falling back to Pillow...")
+            logger.warning(  # Warn on rasterio failure and fall back.
+                "Warning: rasterio failed to open '%s' as GeoTIFF or read band %s: %s",  # Log template.
+                path,  # Include file path.
+                band,  # Include band index.
+                e,  # Include error details.
+            )
+            logger.info("Falling back to Pillow...")  # Log fallback behavior.
 
     # Fallback: use Pillow (no georeferencing)
     im = Image.open(path)
@@ -166,7 +192,7 @@ def plot_radar(
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, bbox_inches="tight")
-        print(f"Saved figure to: {save_path}")
+        logger.info("Saved figure to: %s", save_path)  # Log save location.
     else:
         plt.show()
 
@@ -245,7 +271,8 @@ def parse_args() -> argparse.Namespace:
 # Main runtime entry point
 # -------------------------------------------------------------------------
 def main() -> None:
-    args = parse_args()
+    setup_logging()  # Initialize logging for CLI usage.
+    args = parse_args()  # Parse CLI arguments.
 
     # Load raster (GeoTIFF via rasterio or plain TIFF via Pillow)
     data, extent = load_raster(args.input, band=args.band)
@@ -270,4 +297,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

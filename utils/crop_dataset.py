@@ -23,6 +23,7 @@ You can also import the functions in this module and call
 paths or bounding boxes.
 """
 
+import logging  # Emit structured log messages.
 import os
 import rasterio
 from rasterio.transform import from_bounds
@@ -36,6 +37,15 @@ ITALY_BBOX = {
     "min_y": 36.619987291,
     "max_y": 47.1153931748,
 }
+
+
+def setup_logging() -> logging.Logger:
+    """Configure logging and return the module logger."""  # Explain logging setup helper.
+    logging.basicConfig(  # Configure root logging once.
+        level=logging.INFO,  # Default to INFO for user-facing progress.
+        format="%(asctime)s [%(levelname)s] %(message)s",  # Provide consistent log format.
+    )
+    return logging.getLogger(__name__)  # Return a module-level logger.
 
 
 def crop_and_georeference(src_path: str, dest_path: str, bbox: dict = ITALY_BBOX) -> None:
@@ -86,7 +96,12 @@ def crop_and_georeference(src_path: str, dest_path: str, bbox: dict = ITALY_BBOX
             dst.write(data, 1)
 
 
-def process_directory(src_dir: str, dest_dir: str, extensions: Iterable[str] = (".tif", ".tiff")) -> None:
+def process_directory(
+    src_dir: str,  # Source directory containing TIFF files.
+    dest_dir: str,  # Destination directory for processed files.
+    extensions: Iterable[str] = (".tif", ".tiff"),  # File extensions to include.
+    logger: logging.Logger | None = None,  # Optional logger for progress output.
+) -> None:
     """Process all TIFF files in ``src_dir`` and save results to ``dest_dir``.
 
     Parameters
@@ -98,6 +113,7 @@ def process_directory(src_dir: str, dest_dir: str, extensions: Iterable[str] = (
     extensions : iterable of str, optional
         File extensions to consider as TIFF files (case-insensitive).
     """
+    logger = logger or logging.getLogger(__name__)  # Default to module logger if none provided.
     # Ensure source exists
     if not os.path.isdir(src_dir):
         raise FileNotFoundError(f"Source directory does not exist: {src_dir}")
@@ -132,7 +148,11 @@ def process_directory(src_dir: str, dest_dir: str, extensions: Iterable[str] = (
 
         # Process file
         crop_and_georeference(src_path, dest_path)
-        print(f"Processed {src_path} -> {dest_path}")
+        logger.info(  # Log processed file path.
+            "Processed %s -> %s",  # Log message template.
+            src_path,  # Include source path.
+            dest_path,  # Include destination path.
+        )
 
 
 def main() -> None:
@@ -142,9 +162,10 @@ def main() -> None:
     the Vincenzo project.  Adjust ``src_dir`` and ``dest_dir`` here if
     your environment differs.
     """
-    src_dir = "previews/epoch_000/predictions"
-    dest_dir = os.path.join(os.path.dirname(src_dir), "predictions_cropped")
-    process_directory(src_dir, dest_dir)
+    logger = setup_logging()  # Initialize logging for command-line usage.
+    src_dir = "previews/epoch_000/predictions"  # Define default source directory.
+    dest_dir = os.path.join(os.path.dirname(src_dir), "predictions_cropped")  # Build output path.
+    process_directory(src_dir, dest_dir, logger=logger)  # Process using configured logger.
 
 
 if __name__ == "__main__":

@@ -388,9 +388,11 @@ def main():
     datetimes = list(iterate_datetimes(args.start, args.end, TIME_STEP_MINUTES))
 
     if args.dryrun:
-        for dt in tqdm(datetimes, desc="Dryrun"):
-            print(build_url(dt, args.base_url, args.prefix, args.postfix))
-        sys.exit(0)
+        for dt in tqdm(datetimes, desc="Dryrun"):  # Iterate timestamps for dry-run output.
+            logger.info(  # Log each URL instead of printing to stdout.
+                build_url(dt, args.base_url, args.prefix, args.postfix)  # Build the URL to preview.
+            )
+        sys.exit(0)  # Exit after dry-run listing.
 
     failed = 0
 
@@ -455,4 +457,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
