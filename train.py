@@ -1,6 +1,7 @@
 import os
 import argparse
 import datetime
+import logging  # Use the logging module for structured status output.
 
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -26,8 +27,14 @@ from rainpred.metrics import evaluate
 from rainpred.train_utils import train_epoch, save_val_previews
 
 
+# Create a module-level logger to replace print statements.
+logger = logging.getLogger(__name__)
+
+
 def main() -> None:
     """Train RainPredRNN on GeoTIFF radar data."""
+    # Configure logging for CLI runs to surface status messages.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     # ---------------- CLI ----------------
     parser = argparse.ArgumentParser(description="Train RainPredRNN nowcasting model.")
@@ -130,11 +137,16 @@ def main() -> None:
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(val_preview_root, exist_ok=True)
 
-    print(f"[train] Device: {DEVICE}")
-    print(f"[train] Data path: {data_path}")
-    print(f"[train] Checkpoints: {checkpoint_dir}")
-    print(f"[train] TensorBoard runs: {runs_dir}")
-    print(f"[train] Val previews: {val_preview_root}")
+    # Log the device choice to document runtime hardware.
+    logger.info("[train] Device: %s", DEVICE)
+    # Log the data directory for traceability.
+    logger.info("[train] Data path: %s", data_path)
+    # Log checkpoint directory to show where models are saved.
+    logger.info("[train] Checkpoints: %s", checkpoint_dir)
+    # Log TensorBoard run directory for experiment tracking.
+    logger.info("[train] TensorBoard runs: %s", runs_dir)
+    # Log validation preview directory for output inspection.
+    logger.info("[train] Val previews: %s", val_preview_root)
 
     # ---------------- data ----------------
     train_loader, val_loader = create_dataloaders(
@@ -145,8 +157,10 @@ def main() -> None:
         small_debug=small_debug,
     )
 
-    print(f"[train] Train steps/epoch: {len(train_loader)}")
-    print(f"[train]  Val  steps/epoch: {len(val_loader)}")
+    # Log training steps per epoch to communicate dataset size.
+    logger.info("[train] Train steps/epoch: %s", len(train_loader))
+    # Log validation steps per epoch for context.
+    logger.info("[train]  Val  steps/epoch: %s", len(val_loader))
 
     # ---------------- model ----------------
     model = RainPredModel(
@@ -163,7 +177,8 @@ def main() -> None:
     if DEVICE == "cuda":
         n_gpus = torch.cuda.device_count()
         if n_gpus > 1:
-            print(f"[train] Using DataParallel on {n_gpus} GPUs")
+            # Log multi-GPU usage to highlight parallel training.
+            logger.info("[train] Using DataParallel on %s GPUs", n_gpus)
             model = torch.nn.DataParallel(model)
     model = model.to(DEVICE)
 
@@ -176,7 +191,8 @@ def main() -> None:
 
     # ---------------- optional resume ----------------
     if resume_from is not None and os.path.isfile(resume_from):
-        print(f"[train] Resuming from checkpoint: {resume_from}")
+        # Log checkpoint resume path for reproducibility.
+        logger.info("[train] Resuming from checkpoint: %s", resume_from)
         ckpt = torch.load(resume_from, map_location=DEVICE)
 
         if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
@@ -194,7 +210,12 @@ def main() -> None:
         model_to_load = model.module if isinstance(model, torch.nn.DataParallel) else model
         model_to_load.load_state_dict(state_dict, strict=False)
 
-        print(f"[train] Resumed at epoch={start_epoch}, best_val_total={best_val_total:.4f}")
+        # Log the resumed epoch and best validation score.
+        logger.info(
+            "[train] Resumed at epoch=%s, best_val_total=%.4f",
+            start_epoch,
+            best_val_total,
+        )
 
     # ---------------- TensorBoard ----------------
     train_writer = SummaryWriter(os.path.join(runs_dir, "train"))
@@ -202,7 +223,8 @@ def main() -> None:
 
     # ---------------- main loop ----------------
     for epoch in range(start_epoch, num_epochs):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
+        # Log the current epoch for progress tracking.
+        logger.info("Epoch %s/%s", epoch + 1, num_epochs)
 
         # --- train ---
         t0 = datetime.datetime.now()
@@ -215,7 +237,8 @@ def main() -> None:
             pred_length=pred_length,
         )
         t_train = (datetime.datetime.now() - t0).total_seconds()
-        print(f"\tTrain Loss: {train_loss:.4f}  ({hms(t_train)})")
+        # Log training loss and elapsed time for quick monitoring.
+        logger.info("\tTrain Loss: %.4f  (%s)", train_loss, hms(t_train))
 
         # --- validate ---
         v0 = datetime.datetime.now()
@@ -231,7 +254,8 @@ def main() -> None:
         scheduler.step(val_metrics["TOTAL"])
 
         metrics_str = ", ".join(f"{k}: {float(v):.4f}" for k, v in val_metrics.items())
-        print(f"\tVal {metrics_str}  ({hms(t_val)})")
+        # Log validation metrics and elapsed time for evaluation tracking.
+        logger.info("\tVal %s  (%s)", metrics_str, hms(t_val))
 
         # log scalars
         train_writer.add_scalar("Loss", train_loss, epoch)
@@ -253,7 +277,11 @@ def main() -> None:
         # --- best model ---
         if val_metrics["TOTAL"] < best_val_total:
             best_val_total = val_metrics["TOTAL"]
-            print(f"\t[train] New best TOTAL={best_val_total:.4f} -> saving best_model.pth")
+            # Log when a new best model is found to explain checkpoint updates.
+            logger.info(
+                "\t[train] New best TOTAL=%.4f -> saving best_model.pth",
+                best_val_total,
+            )
             model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
             torch.save(
                 {
@@ -270,7 +298,8 @@ def main() -> None:
         # --- periodic "last" checkpoint ---
         if ((epoch + 1) % save_every == 0) or (epoch + 1 == num_epochs):
             last_path = os.path.join(checkpoint_dir, f"last_epoch_{epoch+1:03d}.pth")
-            print(f"\t[train] Saving last checkpoint to {last_path}")
+            # Log periodic checkpoint saves for visibility.
+            logger.info("\t[train] Saving last checkpoint to %s", last_path)
             model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
             torch.save(
                 {
@@ -286,7 +315,8 @@ def main() -> None:
 
     train_writer.close()
     val_writer.close()
-    print("[train] Training completed.")
+    # Log completion to signal end of training.
+    logger.info("[train] Training completed.")
 
 
 if __name__ == "__main__":
