@@ -2,12 +2,17 @@ import os
 import re
 import argparse
 import datetime as dt
+import logging  # Use the logging module for structured status output.
 from typing import List
 
 import torch
 
 from rainpred.model import RainPredModel
 from rainpred.geo_io import load_sequence_from_dir, save_predictions_as_geotiff
+
+
+# Create a module-level logger to replace print-based status messages.
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
@@ -48,7 +53,8 @@ def load_model(checkpoint_path: str, device: torch.device, pred_length: int) -> 
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    print(f"[predict] Loading checkpoint from: {checkpoint_path}")
+    # Log which checkpoint is being loaded for transparency.
+    logger.info("[predict] Loading checkpoint from: %s", checkpoint_path)
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only = False)
 
     # Extract a state_dict from various checkpoint formats
@@ -225,14 +231,22 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    # Configure root logging once for the CLI entry point.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
 
     device = get_device(prefer_cpu=args.cpu)
-    print(f"[predict] Using device: {device}")
+    # Log the device selection to clarify runtime hardware.
+    logger.info("[predict] Using device: %s", device)
 
     # Load input sequence and metadata
     seq, paths, shape_info, meta = load_sequence_from_dir(args.input_dir, args.m)
-    print(f"[predict] Loaded sequence with {seq.shape[1]} frames from {args.input_dir}")
+    # Log how many frames were loaded from the input directory.
+    logger.info(
+        "[predict] Loaded sequence with %s frames from %s",
+        seq.shape[1],
+        args.input_dir,
+    )
 
     # Instantiate and load model
     model = load_model(
@@ -264,11 +278,15 @@ def main() -> None:
         out_names=out_basenames,
     )
 
-    print(f"[predict] Checkpoint used: {args.checkpoint}")
-    print(f"[predict] Predicted {len(saved_paths)} frames (n={args.n}).")
-    print(f"[predict] Saved outputs in: {args.output_dir}")
+    # Log the checkpoint used to help with reproducibility.
+    logger.info("[predict] Checkpoint used: %s", args.checkpoint)
+    # Log the count of predicted frames to confirm output size.
+    logger.info("[predict] Predicted %s frames (n=%s).", len(saved_paths), args.n)
+    # Log the output directory for user visibility.
+    logger.info("[predict] Saved outputs in: %s", args.output_dir)
     for p in saved_paths:
-        print(f"  -> {os.path.basename(p)}")
+        # Log each saved filename for quick inspection.
+        logger.info("  -> %s", os.path.basename(p))
 
 
 if __name__ == "__main__":
