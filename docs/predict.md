@@ -96,6 +96,9 @@ python predict.py \
   - Directory where predicted frames are written as GeoTIFFs.
 - `--cpu`:
   - Optional flag to force inference on CPU even if CUDA is available.
+- `--resample-factor`:
+  - Optional scale factor to resample input frames in-place before inference.
+  - Use `1.0` to leave inputs unchanged; values must be greater than 0.
 
 Example:
 
