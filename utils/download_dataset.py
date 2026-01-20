@@ -8,6 +8,9 @@ from datetime import datetime, timedelta  # For dates and time intervals
 from concurrent.futures import ThreadPoolExecutor, as_completed  # For parallel downloads
 import logging                            # For logging to console and optional file
 import hashlib                            # For checksum (SHA256) verification
+import importlib                          # For optional dependency loading
+import importlib.util                     # For import availability checks
+import numpy as np                        # For numeric array operations
 
 # Third-party libraries
 import requests                           # For HTTP file downloads
@@ -250,6 +253,50 @@ def resample_image(path: str, factor: float, logger=None) -> bool:
         return False
 
 
+def zero_nodata_and_negatives(path: str, logger=None) -> bool:
+    """Set nodata values and negative values to 0 in-place."""
+    if logger is None:  # Default to the module logger when none is supplied.
+        logger = logging.getLogger(__name__)  # Reuse module-level logger.
+
+    if importlib.util.find_spec("rasterio") is None:  # Guard against missing deps.
+        logger.error(  # Log missing dependency when rasterio is unavailable.
+            "rasterio is required to zero nodata values for %s; skipping.", path
+        )
+        return False  # Signal failure due to missing dependency.
+
+    rasterio = importlib.import_module("rasterio")  # Load rasterio dynamically.
+
+    try:
+        with rasterio.open(path) as src:  # Open the raster for reading.
+            data = src.read()  # Read all bands into a NumPy array.
+            profile = src.profile  # Capture the raster profile for rewriting.
+            nodata = src.nodata  # Capture nodata metadata if present.
+
+        if nodata is not None:  # Only mask nodata values when metadata exists.
+            if np.isnan(nodata):  # Handle NaN-based nodata flags.
+                nodata_mask = np.isnan(data)  # Build mask for NaN nodata values.
+            else:
+                nodata_mask = data == nodata  # Build mask for numeric nodata.
+            data[nodata_mask] = 0  # Replace nodata values with zero.
+
+        data[data < 0] = 0  # Replace any negative values with zero.
+
+        if nodata is not None:  # Only update nodata metadata when it was present.
+            profile.update(nodata=0)  # Update nodata value in the output profile.
+
+        with rasterio.open(path, "w", **profile) as dst:  # Open for overwrite.
+            dst.write(data)  # Write the modified data back to disk.
+
+        logger.info("Zeroed nodata and negative values for %s", path)  # Log success.
+        return True  # Signal successful processing.
+
+    except Exception as e:
+        logger.error(  # Log unexpected failures during zeroing.
+            "Failed to zero nodata/negative values for %s: %s", path, e
+        )
+        return False  # Signal failure due to processing error.
+
+
 
 def download_one(
     dt: datetime,
@@ -260,6 +307,7 @@ def download_one(
     skip_existing: bool,
     retries: int,
     resample_factor: float,
+    zero_nodata_negatives: bool,  # Control nodata/negative zeroing after download.
     checksums: dict | None,
     verify_checksums: bool,
     logger=None,
@@ -309,6 +357,14 @@ def download_one(
                     continue
                 return False
 
+        # Optional post-processing to zero nodata/negative values in-place.
+        if zero_nodata_negatives:  # Only apply zeroing when the flag is set.
+            if not zero_nodata_and_negatives(dest_path, logger=logger):
+                if attempt < attempts:  # Retry when zeroing fails and attempts remain.
+                    logger.warning("Retry due to zeroing failure: %s", filename)
+                    continue
+                return False  # Fail after exhausting retries.
+
         return True
 
     return False
@@ -357,6 +413,11 @@ def main():
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument( "--resample", type=float, default=1.0, help=("Resample factor for images; e.g. 0.5 halves width/height, 2.0 doubles them. 1.0 = no resampling."))
+    parser.add_argument(
+        "--zero-nodata-negatives",  # CLI flag for nodata/negative zeroing.
+        action="store_true",  # Store True when the flag is present.
+        help="Set nodata values and all values less than 0 to 0 after download.",
+    )
 
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--retries", type=int, default=3)
@@ -408,6 +469,7 @@ def main():
                 args.skip_existing,
                 args.retries,
                 args.resample,
+                args.zero_nodata_negatives,  # Toggle nodata/negative zeroing.
                 checksums,
                 verify_checksums,
                 logger,
@@ -429,6 +491,7 @@ def main():
                     args.skip_existing,
                     args.retries,
                     args.resample,
+                    args.zero_nodata_negatives,  # Toggle nodata/negative zeroing.
                     checksums,
                     verify_checksums,
                     logger,

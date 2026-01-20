@@ -371,7 +371,7 @@ def plot_sequence(
     nodata_value: float | None,
     orientation: str = "landscape",
     metrics_json: Path | None = None,
-    show_metrics: bool = False,  # Control whether metrics are computed and displayed.
+    metric_flags: dict[str, bool] | None = None,  # Track which metrics are enabled.
 ):
     """
     Plot a sequence of frame pairs (truth vs pred).
@@ -395,6 +395,11 @@ def plot_sequence(
     Metrics can optionally be dumped to a JSON file when enabled.
     """
     logger.info("Sequence mode: plotting %d frame pairs.", len(pairs))
+
+    # Normalize metric flags to ensure downstream access to each selection.
+    metric_flags = metric_flags or {}  # Default to an empty dict when omitted.
+    # Resolve whether any metrics should be computed or rendered.
+    show_metrics = any(metric_flags.values())  # Enable metrics if any flag is set.
 
     # First pass: read data and cache them
     cached: list[tuple[str, np.ndarray, np.ndarray]] = []
@@ -425,7 +430,7 @@ def plot_sequence(
     # Track overall metrics so we can annotate the metrics panel when enabled.
     overall_with_rmse: dict[str, float] | None = None  # Placeholder for overall stats.
     # Guard all metric computations behind the flag.
-    if show_metrics:  # Only compute metrics when the flag is enabled.
+    if show_metrics:  # Only compute metrics when any metric flag is enabled.
         # Precompute metrics (including RMSE) per frame.
         for ts, truth_data, pred_data in cached:  # Loop over each cached frame pair.
             # Compute base metrics for this frame pair.
@@ -474,14 +479,46 @@ def plot_sequence(
         if metrics_json is not None:  # Export metrics when a path is provided.
             # Announce the JSON export location in the log.
             logger.info("Writing metrics JSON to %s", metrics_json)  # Log output path.
-            # Build the JSON payload for downstream analysis.
-            metrics_payload = {  # Assemble payload with per-frame and overall stats.
-                "per_frame": per_frame_metrics,
-                "overall": overall_with_rmse,
+            # Build a filtered metrics payload based on selected metrics.
+            selected_payload = {  # Assemble the JSON payload keyed by metric flags.
+                "per_frame": [],  # Placeholder list for per-frame metrics.
+                "overall": {},  # Placeholder dict for overall metrics.
             }
+            # Populate the per-frame metrics with only enabled fields.
+            for frame_metrics in per_frame_metrics:  # Iterate each frame metrics dict.
+                # Always include the timestamp for context.
+                filtered_frame = {"timestamp": frame_metrics["timestamp"]}  # Seed dict.
+                # Add RMSE when selected.
+                if metric_flags.get("rmse", False):  # Check RMSE selection flag.
+                    filtered_frame["rmse"] = frame_metrics["rmse"]  # Add RMSE value.
+                # Add MAE when selected.
+                if metric_flags.get("mae", False):  # Check MAE selection flag.
+                    filtered_frame["mae"] = frame_metrics["mae"]  # Add MAE value.
+                # Add Bias when selected.
+                if metric_flags.get("bias", False):  # Check Bias selection flag.
+                    filtered_frame["bias"] = frame_metrics["bias"]  # Add Bias value.
+                # Add correlation (R) when selected.
+                if metric_flags.get("r", False):  # Check correlation selection flag.
+                    filtered_frame["corr"] = frame_metrics["corr"]  # Add Corr value.
+                # Append the filtered frame metrics to the payload list.
+                selected_payload["per_frame"].append(filtered_frame)  # Append entry.
+            # Populate the overall metrics with only enabled fields.
+            if overall_with_rmse is not None:  # Ensure overall metrics exist.
+                # Add RMSE when selected.
+                if metric_flags.get("rmse", False):  # Check RMSE selection flag.
+                    selected_payload["overall"]["rmse"] = overall_with_rmse["rmse"]  # noqa: E501 - add RMSE
+                # Add MAE when selected.
+                if metric_flags.get("mae", False):  # Check MAE selection flag.
+                    selected_payload["overall"]["mae"] = overall_with_rmse["mae"]  # noqa: E501 - add MAE
+                # Add Bias when selected.
+                if metric_flags.get("bias", False):  # Check Bias selection flag.
+                    selected_payload["overall"]["bias"] = overall_with_rmse["bias"]  # noqa: E501 - add Bias
+                # Add correlation (R) when selected.
+                if metric_flags.get("r", False):  # Check correlation selection flag.
+                    selected_payload["overall"]["corr"] = overall_with_rmse["corr"]  # noqa: E501 - add Corr
             # Persist the metrics to disk as formatted JSON.
             with metrics_json.open("w") as f:  # Open the JSON output file.
-                json.dump(metrics_payload, f, indent=2)  # Write pretty JSON.
+                json.dump(selected_payload, f, indent=2)  # Write pretty JSON.
             # Confirm the JSON write succeeded.
             logger.info("Metrics JSON successfully written.")  # Log completion.
     # Warn if metrics JSON is requested while metrics are disabled.
@@ -553,23 +590,33 @@ def plot_sequence(
                 # Fetch metrics for this frame.
                 m = per_frame_metrics[col_idx]  # Select metrics by column index.
                 # Compose a multi-line text label for the overlay.
-                metric_text = (  # Build a multi-line overlay string.
-                    f"RMSE={m['rmse']:.2f}\n"
-                    f"MAE={m['mae']:.2f}\n"
-                    f"Bias={m['bias']:.2f}\n"
-                    f"R={m['corr']:.2f}"
-                )
+                metric_lines = []  # Prepare the list of metric strings.
+                # Add RMSE line when enabled.
+                if metric_flags.get("rmse", False):  # Check RMSE selection.
+                    metric_lines.append(f"RMSE={m['rmse']:.2f}")  # Append RMSE line.
+                # Add MAE line when enabled.
+                if metric_flags.get("mae", False):  # Check MAE selection.
+                    metric_lines.append(f"MAE={m['mae']:.2f}")  # Append MAE line.
+                # Add Bias line when enabled.
+                if metric_flags.get("bias", False):  # Check Bias selection.
+                    metric_lines.append(f"Bias={m['bias']:.2f}")  # Append Bias line.
+                # Add correlation line when enabled.
+                if metric_flags.get("r", False):  # Check R selection.
+                    metric_lines.append(f"R={m['corr']:.2f}")  # Append R line.
+                # Join the selected metric lines into a block of text.
+                metric_text = "\n".join(metric_lines)  # Build overlay string.
                 # Place the metrics in the bottom-left corner of the panel.
-                ax_truth.text(  # Render the metric overlay text.
-                    0.01,  # Use a small left margin.
-                    0.02,  # Use a small bottom margin.
-                    metric_text,  # Draw the metrics text.
-                    transform=ax_truth.transAxes,  # Place in axes coordinates.
-                    fontsize=7,  # Use a small font for overlay readability.
-                    va="bottom",  # Anchor the text to the bottom.
-                    ha="left",  # Align the text to the left.
-                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
-                )
+                if metric_text:  # Only render when at least one metric line exists.
+                    ax_truth.text(  # Render the metric overlay text.
+                        0.01,  # Use a small left margin.
+                        0.02,  # Use a small bottom margin.
+                        metric_text,  # Draw the metrics text.
+                        transform=ax_truth.transAxes,  # Place in axes coordinates.
+                        fontsize=7,  # Use a small font for overlay readability.
+                        va="bottom",  # Anchor the text to the bottom.
+                        ha="left",  # Align the text to the left.
+                        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
+                    )
 
             last_im = im_pred or im_truth
 
@@ -624,23 +671,33 @@ def plot_sequence(
                 # Pull the metrics for this timestamp.
                 m = per_frame_metrics[row_idx]  # Select metrics by row index.
                 # Build the overlay string for this frame.
-                metric_text = (  # Compose the per-frame metrics text.
-                    f"RMSE={m['rmse']:.2f}\n"
-                    f"MAE={m['mae']:.2f}\n"
-                    f"Bias={m['bias']:.2f}\n"
-                    f"R={m['corr']:.2f}"
-                )
+                metric_lines = []  # Prepare the list of metric strings.
+                # Add RMSE line when enabled.
+                if metric_flags.get("rmse", False):  # Check RMSE selection.
+                    metric_lines.append(f"RMSE={m['rmse']:.2f}")  # Append RMSE line.
+                # Add MAE line when enabled.
+                if metric_flags.get("mae", False):  # Check MAE selection.
+                    metric_lines.append(f"MAE={m['mae']:.2f}")  # Append MAE line.
+                # Add Bias line when enabled.
+                if metric_flags.get("bias", False):  # Check Bias selection.
+                    metric_lines.append(f"Bias={m['bias']:.2f}")  # Append Bias line.
+                # Add correlation line when enabled.
+                if metric_flags.get("r", False):  # Check R selection.
+                    metric_lines.append(f"R={m['corr']:.2f}")  # Append R line.
+                # Join the selected metric lines into a block of text.
+                metric_text = "\n".join(metric_lines)  # Compose metrics text.
                 # Paint the metrics box onto the truth panel.
-                ax_truth.text(  # Render the text overlay on the truth axis.
-                    0.01,  # Use a left margin.
-                    0.02,  # Use a bottom margin.
-                    metric_text,  # Add the text content.
-                    transform=ax_truth.transAxes,  # Position in axes coords.
-                    fontsize=8,  # Slightly larger font for portrait mode.
-                    va="bottom",  # Anchor the text to the bottom.
-                    ha="left",  # Align left for readability.
-                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
-                )
+                if metric_text:  # Only render when at least one metric line exists.
+                    ax_truth.text(  # Render the text overlay on the truth axis.
+                        0.01,  # Use a left margin.
+                        0.02,  # Use a bottom margin.
+                        metric_text,  # Add the text content.
+                        transform=ax_truth.transAxes,  # Position in axes coords.
+                        fontsize=8,  # Slightly larger font for portrait mode.
+                        va="bottom",  # Anchor the text to the bottom.
+                        ha="left",  # Align left for readability.
+                        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
+                    )
 
             last_im = im_pred or im_truth
 
@@ -655,16 +712,23 @@ def plot_sequence(
         rmse_vals = [m["rmse"] for m in per_frame_metrics]  # Collect RMSE values.
         mae_vals = [m["mae"] for m in per_frame_metrics]  # Collect MAE values.
         bias_vals = [m["bias"] for m in per_frame_metrics]  # Collect Bias values.
+        r_vals = [m["corr"] for m in per_frame_metrics]  # Collect correlation values.
 
         # Build the x-axis positions for each frame.
         x = np.arange(nframes)  # Use consecutive indices for frames.
 
-        # Plot the RMSE series.
-        ax_metrics.plot(x, rmse_vals, marker="o", label="RMSE")  # Plot RMSE.
-        # Plot the MAE series.
-        ax_metrics.plot(x, mae_vals, marker="s", label="MAE")  # Plot MAE.
-        # Plot the Bias series.
-        ax_metrics.plot(x, bias_vals, marker="^", label="Bias")  # Plot Bias.
+        # Plot the RMSE series when enabled.
+        if metric_flags.get("rmse", False):  # Check RMSE selection.
+            ax_metrics.plot(x, rmse_vals, marker="o", label="RMSE")  # Plot RMSE.
+        # Plot the MAE series when enabled.
+        if metric_flags.get("mae", False):  # Check MAE selection.
+            ax_metrics.plot(x, mae_vals, marker="s", label="MAE")  # Plot MAE.
+        # Plot the Bias series when enabled.
+        if metric_flags.get("bias", False):  # Check Bias selection.
+            ax_metrics.plot(x, bias_vals, marker="^", label="Bias")  # Plot Bias.
+        # Plot the correlation series when enabled.
+        if metric_flags.get("r", False):  # Check correlation selection.
+            ax_metrics.plot(x, r_vals, marker="d", label="R")  # Plot R.
 
         # Configure the x-axis tick placement.
         ax_metrics.set_xticks(x)  # Use frame indices as tick positions.
@@ -672,31 +736,41 @@ def plot_sequence(
         ax_metrics.set_xticklabels(frame_labels, rotation=45)  # Add tick labels.
         # Label the x-axis for clarity.
         ax_metrics.set_xlabel("Time (hhmm)")  # Describe the x-axis.
-        # Label the y-axis with the units.
-        ax_metrics.set_ylabel("Error (dBZ)")  # Describe the y-axis.
+        # Label the y-axis with a generic descriptor since metrics vary.
+        ax_metrics.set_ylabel("Metric value")  # Describe the y-axis.
         # Add a light grid for readability.
         ax_metrics.grid(True, linestyle="--", alpha=0.3)  # Add grid lines.
         # Add a legend for the plotted series.
         ax_metrics.legend(loc="upper right", fontsize=8)  # Display legend.
 
         # Add overall metrics as a text box.
-        overall_text = (  # Compose the overall metrics string.
-            f"Overall: RMSE={overall_with_rmse['rmse']:.2f}, "
-            f"MAE={overall_with_rmse['mae']:.2f}, "
-            f"Bias={overall_with_rmse['bias']:.2f}, "
-            f"R={overall_with_rmse['corr']:.2f}"
-        )
+        overall_lines = []  # Initialize the list of overall metric lines.
+        # Add overall RMSE when enabled.
+        if metric_flags.get("rmse", False):  # Check RMSE selection.
+            overall_lines.append(f"RMSE={overall_with_rmse['rmse']:.2f}")  # Add RMSE.
+        # Add overall MAE when enabled.
+        if metric_flags.get("mae", False):  # Check MAE selection.
+            overall_lines.append(f"MAE={overall_with_rmse['mae']:.2f}")  # Add MAE.
+        # Add overall Bias when enabled.
+        if metric_flags.get("bias", False):  # Check Bias selection.
+            overall_lines.append(f"Bias={overall_with_rmse['bias']:.2f}")  # Add Bias.
+        # Add overall correlation when enabled.
+        if metric_flags.get("r", False):  # Check R selection.
+            overall_lines.append(f"R={overall_with_rmse['corr']:.2f}")  # Add R.
+        # Compose the overall metrics string from the selected lines.
+        overall_text = f"Overall: {', '.join(overall_lines)}"  # Build summary text.
         # Place the overall metrics in the top-left of the metrics panel.
-        ax_metrics.text(  # Draw the overall metrics text box.
-            0.01,  # Use a left margin.
-            0.95,  # Use a top margin.
-            overall_text,  # Provide the text content.
-            transform=ax_metrics.transAxes,  # Position in axes coordinates.
-            fontsize=9,  # Use a readable font size.
-            va="top",  # Anchor the text to the top.
-            ha="left",  # Align text to the left.
-            bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),  # Box styling.
-        )
+        if overall_lines:  # Only draw the overall box when at least one metric is on.
+            ax_metrics.text(  # Draw the overall metrics text box.
+                0.01,  # Use a left margin.
+                0.95,  # Use a top margin.
+                overall_text,  # Provide the text content.
+                transform=ax_metrics.transAxes,  # Position in axes coordinates.
+                fontsize=9,  # Use a readable font size.
+                va="top",  # Anchor the text to the top.
+                ha="left",  # Align text to the left.
+                bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),  # Box styling.
+            )
 
     # Colorbar on the right, outside the image panels
     if last_im is not None:
@@ -808,6 +882,26 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--metric-rmse",  # CLI flag name for enabling RMSE only.
+        action="store_true",  # Store True when the flag is present.
+        help="Enable RMSE metrics overlays/plots/export.",  # Describe the flag.
+    )
+    parser.add_argument(
+        "--metric-mae",  # CLI flag name for enabling MAE only.
+        action="store_true",  # Store True when the flag is present.
+        help="Enable MAE metrics overlays/plots/export.",  # Describe the flag.
+    )
+    parser.add_argument(
+        "--metric-bias",  # CLI flag name for enabling Bias only.
+        action="store_true",  # Store True when the flag is present.
+        help="Enable Bias metrics overlays/plots/export.",  # Describe the flag.
+    )
+    parser.add_argument(
+        "--metric-r",  # CLI flag name for enabling correlation only.
+        action="store_true",  # Store True when the flag is present.
+        help="Enable correlation (R) metrics overlays/plots/export.",  # Describe flag.
+    )
+    parser.add_argument(
         "--nodata",
         type=float,
         default=None,
@@ -853,10 +947,31 @@ def main():
     save_path = Path(args.save).resolve() if args.save else None
     metrics_json_path = Path(args.metrics_json).resolve() if args.metrics_json else None
 
+    # Build the metric selection map from CLI flags.
+    metric_flags = {  # Collect the per-metric enablement flags.
+        "rmse": args.metric_rmse,  # Track RMSE enablement.
+        "mae": args.metric_mae,  # Track MAE enablement.
+        "bias": args.metric_bias,  # Track Bias enablement.
+        "r": args.metric_r,  # Track correlation enablement.
+    }
+    # Enable all metrics when the legacy --metrics flag is provided.
+    if args.metrics:  # Support the legacy flag for enabling all metrics.
+        metric_flags = {  # Override with all metrics enabled.
+            "rmse": True,  # Enable RMSE.
+            "mae": True,  # Enable MAE.
+            "bias": True,  # Enable Bias.
+            "r": True,  # Enable correlation.
+        }
+
+    # Determine whether any metric was enabled.
+    metrics_enabled = any(metric_flags.values())  # True if any flag is set.
+
     # Ensure metrics JSON export is only attempted when metrics are enabled.
-    if metrics_json_path is not None and not args.metrics:
+    if metrics_json_path is not None and not metrics_enabled:
         # Inform the user that metrics need to be enabled for JSON output.
-        logger.error("--metrics-json requires --metrics to be enabled.")
+        logger.error(
+            "--metrics-json requires at least one metric flag (or --metrics)."
+        )
         # Exit with a non-zero status to signal misconfiguration.
         raise SystemExit(2)
 
@@ -869,7 +984,7 @@ def main():
         nodata_value=args.nodata,
         orientation=args.orientation,
         metrics_json=metrics_json_path,
-        show_metrics=args.metrics,  # Enable metrics visualization when requested.
+        metric_flags=metric_flags,  # Enable metrics visualization when requested.
     )
 
 
