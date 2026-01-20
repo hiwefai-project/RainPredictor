@@ -3,6 +3,7 @@ import re
 import argparse
 import datetime as dt
 import logging  # Use the logging module for structured status output.
+import importlib.util  # Check optional dependencies without try/except around imports.
 from typing import List
 
 import torch
@@ -184,6 +185,147 @@ def generate_output_basenames(
 
 
 # ----------------------------------------------------------------------
+# Optional resampling helper
+# ----------------------------------------------------------------------
+def resample_image(path: str, factor: float, logger: logging.Logger | None = None) -> bool:
+    """Resample an image in-place by the given factor, preserving aspect ratio.
+
+    If the file is a GeoTIFF, the georeferencing information (CRS and affine
+    transform) is preserved and properly updated after resampling.
+
+    The image is opened, resized, and saved back to the same path. A factor of
+    1.0 leaves the image unchanged. Factors must be greater than 0.
+    """
+    # Fall back to a module logger if one is not supplied.
+    if logger is None:
+        # Retrieve the module-level logger for consistent log formatting.
+        logger = logging.getLogger(__name__)
+
+    # Short-circuit when no resampling is required.
+    if factor == 1.0:
+        # Nothing to do when the factor is exactly 1.0.
+        return True
+
+    # Guard against invalid scaling factors.
+    if factor <= 0:
+        # Log invalid factors so users can fix input quickly.
+        logger.error("Invalid resample factor %s. It must be > 0.", factor)
+        # Signal failure to the caller.
+        return False
+
+    # Check if rasterio and affine are available without try/except around imports.
+    rasterio_spec = importlib.util.find_spec("rasterio")
+    # Check for affine availability to compute updated transforms.
+    affine_spec = importlib.util.find_spec("affine")
+    # Proceed with GeoTIFF-aware resampling only when both dependencies exist.
+    if rasterio_spec is not None and affine_spec is not None:
+        # Import rasterio lazily once we know it is available.
+        import rasterio
+        # Import the resampling enum needed for bilinear resizing.
+        from rasterio.enums import Resampling
+        # Import Affine to scale the geotransform accurately.
+        from affine import Affine
+
+        try:
+            # Open the GeoTIFF and gather metadata needed for resizing.
+            with rasterio.open(path) as src:
+                # Capture the original width and height for logging.
+                width, height = src.width, src.height
+                # Compute the resampled dimensions while keeping at least 1 pixel.
+                new_width = max(1, int(round(width * factor)))
+                # Compute the resampled dimensions while keeping at least 1 pixel.
+                new_height = max(1, int(round(height * factor)))
+
+                # Read and resample the data into the new shape.
+                data = src.read(
+                    out_shape=(src.count, new_height, new_width),
+                    resampling=Resampling.bilinear,
+                )
+
+                # Compute the scale factors used to update the transform.
+                scale_x = width / new_width
+                # Compute the scale factors used to update the transform.
+                scale_y = height / new_height
+                # Build a new affine transform that preserves georeferencing.
+                new_transform = src.transform * Affine.scale(scale_x, scale_y)
+
+                # Start from the existing profile to preserve GeoTIFF metadata.
+                profile = src.profile
+                # Update the profile with the new size and transform.
+                profile.update(
+                    height=new_height,
+                    width=new_width,
+                    transform=new_transform,
+                )
+
+            # Write the resampled data back to the same path.
+            with rasterio.open(path, "w", **profile) as dst:
+                # Persist the resized data while preserving CRS.
+                dst.write(data)
+
+            # Log the resize result for transparency.
+            logger.info(
+                "GeoTIFF resampled %s from %dx%d to %dx%d (CRS preserved)",
+                path, width, height, new_width, new_height,
+            )
+            # Indicate success to the caller.
+            return True
+        except Exception as exc:
+            # Log the failure and fall back to PIL-based resizing.
+            logger.warning(
+                "GeoTIFF-aware resampling failed for %s (%s); falling back to PIL.",
+                path, exc,
+            )
+    else:
+        # Warn that rasterio/affine are missing and metadata may be lost.
+        logger.warning(
+            "rasterio/affine not available; falling back to PIL for %s. "
+            "GeoTIFF metadata (if any) may not be preserved.",
+            path,
+        )
+
+    # Check if Pillow is available for a generic resampling fallback.
+    pillow_spec = importlib.util.find_spec("PIL")
+    # Abort if Pillow is missing since we cannot resize without it.
+    if pillow_spec is None:
+        # Log the missing dependency to guide installation.
+        logger.error("Pillow (PIL) is not available; cannot resample %s.", path)
+        # Signal failure to the caller.
+        return False
+
+    # Import Pillow only after confirming availability.
+    from PIL import Image
+
+    try:
+        # Open the image using Pillow for generic resizing.
+        with Image.open(path) as img:
+            # Capture the original dimensions for logging.
+            width, height = img.size
+            # Compute the new width while preserving aspect ratio.
+            new_width = max(1, int(round(width * factor)))
+            # Compute the new height while preserving aspect ratio.
+            new_height = max(1, int(round(height * factor)))
+
+            # Perform bilinear resizing for reasonable quality.
+            resized = img.resize((new_width, new_height), Image.BILINEAR)
+            # Save the resized image back to disk, preserving format.
+            resized.save(path, format=img.format)
+
+        # Log the successful PIL-based resize.
+        logger.info(
+            "Resampled (PIL) %s from %dx%d to %dx%d",
+            path, width, height, new_width, new_height,
+        )
+        # Indicate success to the caller.
+        return True
+    except Exception as exc:
+        # Log any unexpected errors encountered during PIL resize.
+        logger.error("Failed to resample image %s: %s", path, exc)
+        # Signal failure to the caller.
+        return False
+
+
+# ----------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
@@ -227,7 +369,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force inference on CPU even if CUDA is available.",
     )
+    # Add a resampling factor flag to optionally scale input frames in-place.
+    parser.add_argument(
+        "--resample-factor",
+        # Parse the factor as a float so fractional scaling is supported.
+        type=float,
+        # Default to no-op resampling to preserve current behavior.
+        default=1.0,
+        # Explain how the factor affects input resolution.
+        help=(
+            "Optional scale factor to resample input frames in-place before "
+            "inference (e.g., 0.5 halves resolution, 2.0 doubles it)."
+        ),
+    )
     return parser.parse_args()
+
+
+def list_input_files(input_dir: str, pattern: str = ".tif") -> List[str]:
+    """Return sorted input files matching the expected GeoTIFF extensions."""
+    # Resolve the directory to an absolute path for consistent listing.
+    input_dir = os.path.abspath(input_dir)
+    # Collect files that match the .tif/.tiff patterns used in geo_io.
+    files = [
+        os.path.join(input_dir, filename)
+        for filename in os.listdir(input_dir)
+        if filename.endswith(pattern) or filename.endswith(pattern + "f")
+    ]
+    # Sort for deterministic ordering to match load_sequence_from_dir.
+    files = sorted(files)
+    # Return the ordered list to the caller.
+    return files
 
 
 def main() -> None:
@@ -240,6 +411,27 @@ def main() -> None:
     logger.info("[predict] Using device: %s", device)
 
     # Load input sequence and metadata
+    # Optionally resample the input frames before loading for inference.
+    if args.resample_factor != 1.0:
+        # Determine the full sorted list so we resample the same frames used in inference.
+        input_files = list_input_files(args.input_dir)
+        # Trim to the first m frames to match the inference sequence selection.
+        input_files = input_files[:args.m]
+        # Log how many files will be resampled for clarity.
+        logger.info(
+            "[predict] Resampling %s input frames by factor %.3f",
+            len(input_files),
+            args.resample_factor,
+        )
+        # Resample each input file in-place before loading data.
+        for path in input_files:
+            # Attempt to resample and abort on failure to avoid mixed resolutions.
+            if not resample_image(path, args.resample_factor, logger=logger):
+                # Log the failure and stop inference.
+                logger.error("[predict] Resampling failed for %s; aborting.", path)
+                # Exit early to avoid inconsistent inputs.
+                return
+
     seq, paths, shape_info, meta = load_sequence_from_dir(args.input_dir, args.m)
     # Log how many frames were loaded from the input directory.
     logger.info(

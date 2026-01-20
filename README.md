@@ -106,6 +106,7 @@ Options:
 
 - `--pattern .tif` (default) or `.tiff` depending on files.
 - `--cpu` to force CPU inference.
+- `--resample-factor` to resample input frames in-place before inference (e.g., `0.5` halves resolution).
 
 ## 4. Visual Comparison in Physical Coordinates
 
