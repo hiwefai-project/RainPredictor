@@ -5,3 +5,4 @@
 - Keep changes focused and document summaries in PRs.
 - Use logging instead of print.
 - Add line-by-line pedagogical comments.
+- Update README.md and markdown documents in docs for consistency.
