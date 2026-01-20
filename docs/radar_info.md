@@ -1,6 +1,6 @@
-# radar_info.py
+# Radar metadata inspector (`utils/radar_info.py`)
 
-`radar_info.py` is a command-line tool for analyzing **VMI radar GeoTIFF images** such as those produced by the Italian Department of Civil Protection.  
+`utils/radar_info.py` is a command-line tool for analyzing **VMI radar GeoTIFF images** such as those produced by the Italian Department of Civil Protection.  
 It reads the radar reflectivity values (VMI) from the GeoTIFF file, converts them to **dBZ**, and computes:
 
 - **Maximum reflectivity (dBZ)**
@@ -40,13 +40,13 @@ pip install numpy rasterio
 ### Basic usage (default threshold = 10 dBZ)
 
 ```bash
-python radar_info.py path/to/radar_image.tiff
+python utils/radar_info.py path/to/radar_image.tiff
 ```
 
 ### Custom threshold
 
 ```bash
-python radar_info.py path/to/radar_image.tiff --threshold 20
+python utils/radar_info.py path/to/radar_image.tiff --threshold 20
 ```
 
 ---
@@ -89,7 +89,7 @@ Example:
 
 ```bash
 for f in data/*.tiff; do
-    python radar_info.py "$f" --threshold 15
+    python utils/radar_info.py "$f" --threshold 15
 done
 ```
 
@@ -105,4 +105,3 @@ You may use the script freely in research and operational workflows.
 ## Author
 
 Generated for the Hi-WeFAI project radar processing tasks.
-

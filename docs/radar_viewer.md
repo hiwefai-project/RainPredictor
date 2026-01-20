@@ -1,4 +1,4 @@
-# Radar / GeoTIFF Visualizer
+# Radar/GeoTIFF visualizer (`utils/radar_viewer.py`)
 
 This project provides a command-line tool to visualize **radar TIFF and GeoTIFF** images using false-color weather radar look-up tables (LUTs).  
 The visualization configuration—including colors and dBZ intensity intervals—is defined in an external **palette JSON file**.
@@ -71,7 +71,7 @@ This palette design allows you to maintain **product-specific visualization styl
 ### Basic usage (TIFF or GeoTIFF)
 
 ```bash
-python radar_viewer.py -i input.tiff -p palette.json
+python utils/radar_viewer.py -i input.tiff -p palette.json
 ```
 
 If `input.tiff` is a GeoTIFF and `rasterio` is installed:
@@ -96,7 +96,7 @@ If `input.tiff` is a plain TIFF or `rasterio` is not available:
 For multi-band GeoTIFFs (e.g., different radar products per band), you can select the band:
 
 ```bash
-python radar_viewer.py -i radar_geotiff.tif -p palette.json --band 2
+python utils/radar_viewer.py -i radar_geotiff.tif -p palette.json --band 2
 ```
 
 - `--band` is **1-based** (1 = first band, 2 = second band, ...).
@@ -135,7 +135,7 @@ By default:
 To keep axes visible (recommended when you care about coordinates):
 
 ```bash
-python radar_viewer.py -i radar_geotiff.tif -p palette.json --show-axes
+python utils/radar_viewer.py -i radar_geotiff.tif -p palette.json --show-axes
 ```
 
 This will display axis ticks, which correspond to the coordinate values in the GeoTIFF CRS.
@@ -147,25 +147,25 @@ This will display axis ticks, which correspond to the coordinate values in the G
 ### Custom title
 
 ```bash
-python radar_viewer.py -i input.tiff -p palette.json --title "Radar Frame"
+python utils/radar_viewer.py -i input.tiff -p palette.json --title "Radar Frame"
 ```
 
 ### Disable colorbar
 
 ```bash
-python radar_viewer.py -i input.tiff -p palette.json --no-colorbar
+python utils/radar_viewer.py -i input.tiff -p palette.json --no-colorbar
 ```
 
 ### Save output to file instead of showing
 
 ```bash
-python radar_viewer.py -i input.tiff -p palette.json --save output.png
+python utils/radar_viewer.py -i input.tiff -p palette.json --save output.png
 ```
 
 ### High DPI output
 
 ```bash
-python radar_viewer.py -i input.tiff -p palette.json --dpi 200
+python utils/radar_viewer.py -i input.tiff -p palette.json --dpi 200
 ```
 
 ---
@@ -173,13 +173,21 @@ python radar_viewer.py -i input.tiff -p palette.json --dpi 200
 ## Example
 
 ```bash
-python radar_viewer.py     -i /path/to/frame_01_pred.tiff     -p palette.json     --title "Hi-WeFAI Radar Prediction"
+python utils/radar_viewer.py \
+  -i /path/to/frame_01_pred.tiff \
+  -p palette.json \
+  --title "Hi-WeFAI Radar Prediction"
 ```
 
 Example with GeoTIFF, second band, axes enabled:
 
 ```bash
-python radar_viewer.py     -i /path/to/radar_geotiff.tif     -p palette.json     --band 2     --show-axes     --title "Radar GeoTIFF Band 2"
+python utils/radar_viewer.py \
+  -i /path/to/radar_geotiff.tif \
+  -p palette.json \
+  --band 2 \
+  --show-axes \
+  --title "Radar GeoTIFF Band 2"
 ```
 
 ---
@@ -187,4 +195,3 @@ python radar_viewer.py     -i /path/to/radar_geotiff.tif     -p palette.json    
 ## License
 
 Apache 2.0 License.
-

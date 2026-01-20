@@ -1,4 +1,4 @@
-# Radar Dataset Splitter (`make_splits.py`)
+# Dataset splitter (`utils/make_splits.py`)
 
 This script splits a radar-image dataset into **train**, **validation**, and **test** subsets.  
 It supports two ways of defining the dataset:
@@ -104,7 +104,12 @@ You must provide exactly one.
 ### 4.1 Directory scan mode (default method)
 
 ```bash
-python make_splits.py     --base-path data/dataset/rdr0     --output data/splits     --prefix rdr0_d01_     --suffix _VMI.tiff     --ratios 0.9 0.05 0.05
+python utils/make_splits.py \
+  --base-path data/dataset/rdr0 \
+  --output data/splits \
+  --prefix rdr0_d01_ \
+  --suffix _VMI.tiff \
+  --ratios 0.9 0.05 0.05
 ```
 
 Result:
@@ -123,7 +128,11 @@ data/splits/
 Use this when the dataset is pre-filtered or non-hierarchical:
 
 ```bash
-python make_splits.py     --sequences sequences.csv     --output data/splits     --prefix rdr0_d01_     --suffix _VMI.tiff
+python utils/make_splits.py \
+  --sequences sequences.csv \
+  --output data/splits \
+  --prefix rdr0_d01_ \
+  --suffix _VMI.tiff
 ```
 
 The script will:
@@ -138,7 +147,10 @@ The script will:
 ### 4.3 Copy mode
 
 ```bash
-python make_splits.py     --base-path data/dataset/rdr0     --output data/splits_copy     --copy
+python utils/make_splits.py \
+  --base-path data/dataset/rdr0 \
+  --output data/splits_copy \
+  --copy
 ```
 
 Use if symlinks are not supported (e.g., some shared filesystems, Windows).
@@ -148,7 +160,10 @@ Use if symlinks are not supported (e.g., some shared filesystems, Windows).
 ### 4.4 Logging to a file
 
 ```bash
-python make_splits.py     --base-path data/dataset/rdr0     --output data/splits     --log-file split_radar.log
+python utils/make_splits.py \
+  --base-path data/dataset/rdr0 \
+  --output data/splits \
+  --log-file split_radar.log
 ```
 
 ---
@@ -196,4 +211,3 @@ Splits are deterministic when specifying the same:
 - Copy mode requires significantly more disk space.  
 - The script cleans the output directory before generating splits.  
 - Sequence-file mode is ideal for **curated ML/AI datasets**.
-

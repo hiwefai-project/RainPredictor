@@ -1,4 +1,4 @@
-# RainPredictor Inference (predict.py)
+# Inference guide (`predict.py`)
 
 The `predict.py` script is the **inference entry point** for this repository.
 It loads **m** GeoTIFF radar frames, predicts the next **n** frames with the
