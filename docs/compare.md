@@ -1,20 +1,17 @@
+# Comparison tool (`utils/compare.py`)
 
-# compare.py — Truth vs Prediction Radar Image Comparison Tool
+`utils/compare.py` is a visualization and evaluation tool designed to compare **ground-truth (truth)** radar reflectivity fields against **predicted** fields (typically produced by nowcasting models).
+It generates side-by-side comparison panels, computes verification metrics, and optionally exports metrics to JSON for advanced post-processing.
 
-`compare.py` is a comprehensive visualization and evaluation tool designed to compare **ground‑truth (Truth)** radar reflectivity fields against **Predicted** fields (typically produced by nowcasting models).  
-It generates side‑by‑side comparison panels, computes verification metrics, and optionally exports metrics to JSON for advanced post‑processing.
-
----
-
-## ✨ Features
+## Features
 
 - **Automatic timestamp extraction** (`YYYYMMDDZhhmm`)
 - **Truth vs Pred** comparison with two-column layout
 - **Landscape or Portrait orientation** (`--orientation`)
 - **Custom radar palette support** via JSON (`--palette`)
 - **Robust TIFF/GeoTIFF reader** (supports rasterio or PIL)
-- **NaN‑safe and inf‑safe rendering**
-- **Colorbar placed outside** image area (no overlap)
+- **NaN-safe and inf-safe rendering**
+- **Colorbar placed outside** the image area (no overlap)
 - **Optional per-frame metrics** (enable with `--metrics`), including  
   - RMSE  
   - MSE  
@@ -26,9 +23,7 @@ It generates side‑by‑side comparison panels, computes verification metrics, 
 - **Optional JSON export** (`--metrics-json`, requires `--metrics`) for post-processing
 - Logging support (`--log-level`)
 
----
-
-## 📦 Installation Requirements
+## Installation
 
 Install dependencies:
 
@@ -38,9 +33,7 @@ pip install numpy matplotlib rasterio pillow
 
 Rasterio is preferred for correct GeoTIFF handling.
 
----
-
-## 🗂 Directory Structure
+## Directory structure
 
 Your dataset must contain TIFF/GeoTIFF radar images with timestamps in the filename:
 
@@ -56,7 +49,7 @@ pred/
    ...
 ```
 
-Only the timestamp matters — filenames do not need to match otherwise.
+Only the timestamp matters; filenames do not need to match otherwise.
 
 Timestamp extraction uses:
 
@@ -66,9 +59,7 @@ Timestamp extraction uses:
 
 Example: `20251202Z1810`
 
----
-
-## 🎨 Using a Custom Radar Palette
+## Using a custom radar palette
 
 Example `palette.json`:
 
@@ -85,17 +76,18 @@ Example `palette.json`:
 Use it with:
 
 ```bash
---palette palette.json
+python utils/compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
+  --palette palette.json
 ```
 
----
-
-## 🚀 Command Line Usage
+## Command line usage
 
 ### Basic comparison
 
 ```bash
-python compare.py \
+python utils/compare.py \
   --truth-dir truth \
   --pred-dir pred
 ```
@@ -103,7 +95,7 @@ python compare.py \
 ### With timestamps
 
 ```bash
-python compare.py \
+python utils/compare.py \
   --truth-dir truth \
   --pred-dir pred \
   --start 20251202Z1810 \
@@ -113,30 +105,41 @@ python compare.py \
 ### Save to file
 
 ```bash
---save output.png
+python utils/compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
+  --save output.png
 ```
 
 ### Orientation control
 
 ```bash
---orientation {landscape,portrait}
+python utils/compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
+  --orientation {landscape,portrait}
 ```
 
 ### Enable metrics overlays and plots
 
 ```bash
---metrics
+python utils/compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
+  --metrics
 ```
 
 ### Export metrics to JSON
 
 ```bash
---metrics --metrics-json metrics.json
+python utils/compare.py \
+  --truth-dir truth \
+  --pred-dir pred \
+  --metrics \
+  --metrics-json metrics.json
 ```
 
----
-
-## 📊 JSON Export Format
+## JSON export format
 
 The `--metrics-json` output looks like:
 
@@ -173,9 +176,7 @@ df = pd.DataFrame(metrics["per_frame"])
 print(df)
 ```
 
----
-
-## 🖼 Example Output
+## Example output
 
 The generated figure contains:
 
@@ -185,22 +186,22 @@ The generated figure contains:
 - Bottom metrics graph (RMSE, MAE, Bias) when `--metrics` is enabled
 - External colorbar with optional palette label
 
----
+## Recommended workflow
 
-## 🧪 Recommended Workflow
-
-1. Compare sequences visually  
-2. Export metrics:  
+1. Compare sequences visually.
+2. Export metrics:
    ```bash
-   --metrics --metrics-json metrics.json
+   python utils/compare.py \
+     --truth-dir truth \
+     --pred-dir pred \
+     --metrics \
+     --metrics-json metrics.json
    ```
-3. Analyze model performance across lead times  
-4. Tune model & architecture  
-5. Regenerate comparison to validate improvements
+3. Analyze model performance across lead times.
+4. Tune model and architecture.
+5. Regenerate comparisons to validate improvements.
 
----
-
-## 📬 Support
+## Support
 
 If you want:
 
@@ -211,8 +212,6 @@ If you want:
 
 Just ask — I can extend the tool.
 
----
-
-## 📝 License
+## License
 
 MIT License

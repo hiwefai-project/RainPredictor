@@ -1,4 +1,4 @@
-# Radar dataset downloader
+# Dataset downloader (`utils/download_dataset.py`)
 
 This script downloads a sequence of weather radar TIFF images from a base URL,
 organised in the following directory layout on the server:
@@ -21,7 +21,7 @@ The script supports:
 ## Usage
 
 ```bash
-./download_dataset-2.py START_DATETIME END_DATETIME [options]
+python utils/download_dataset.py START_DATETIME END_DATETIME [options]
 ```
 
 where dates are expressed as:
@@ -32,7 +32,7 @@ where dates are expressed as:
 Example:
 
 ```bash
-./download_dataset-2.py 202512010000 202512012359 \
+python utils/download_dataset.py 202512010000 202512012359 \
     --output-dir data/rdr0_raw \
     --base-url https://data.meteo.uniparthenope.it/instruments/rdr0 \
     --prefix rdr0_d02_ \

@@ -1,4 +1,4 @@
-# RainPredictor – Radar Nowcasting Experiment
+# Training guide (`train.py`)
 
 This repository contains a modular PyTorch implementation of a radar rainfall
 nowcasting model (`RainPredRNN`) composed of:
@@ -10,12 +10,9 @@ nowcasting model (`RainPredRNN`) composed of:
   - Benchmarking of train/val throughput.
   - Automatic saving of predictions and targets as TIFF.
   - Evaluation metrics and confusion matrix report.
-
-
-
 ## 1. Data layout
 
-The code assumes that you have the entire dataset (provided its directory substructure) in a single folder (ex, dataset)
+The code assumes that you have the entire dataset (including its directory substructure) in a single folder (for example, `dataset/`).
 
 Let's run the script to reorganize the dataset into three sub-datasets:
 1) Training set - 90% of the entire dataset
@@ -23,7 +20,13 @@ Let's run the script to reorganize the dataset into three sub-datasets:
 3) Test set - 1% of the entire dataset
 
 ```bash
-python3 make_splits.py --data-dir="<YOUR-dataset-DIR>" --out-dir="<DECIDE-YOUR-OUT-DIR>/splits" --pattern="**/*.tiff" --split-ratios-train=0.90 --split-ratios-val=0.09 --split-ratios-test=0.01
+python utils/make_splits.py \
+  --data-dir "<YOUR-dataset-DIR>" \
+  --out-dir "<DECIDE-YOUR-OUT-DIR>/splits" \
+  --pattern "**/*.tiff" \
+  --split-ratios-train 0.90 \
+  --split-ratios-val 0.09 \
+  --split-ratios-test 0.01
 ```
 
 | Parameter               | Type          | Default       | Description                                                                                       |
@@ -36,7 +39,7 @@ python3 make_splits.py --data-dir="<YOUR-dataset-DIR>" --out-dir="<DECIDE-YOUR-O
 | `--split-ratios-test`   | float         | `0.01`        | Fraction of the dataset to assign to the test set (value between `0.0` and `1.0`).                |
 
 
-The result :
+The result:
 ```text
 <YOUR-OUT-DIR>/splits/
 ├── train/
@@ -72,7 +75,7 @@ You will typically override these via CLI arguments (see below).
 Basic usage:
 
 ```bash
-python main.py \
+python train.py \
   --data-path /path/to/rdr0_splits \
   --val-preview-root /path/to/previews \
   --runs-dir /path/to/runs \
@@ -97,7 +100,7 @@ This will:
 All key paths and hyperparameters are configurable via CLI:
 
 ```bash
-python main.py \
+python train.py \
   --data-path /path/to/rdr0_splits \
   --val-preview-root /path/to/previews \
   --runs-dir /path/to/runs \
@@ -120,7 +123,7 @@ python main.py \
 For quick debugging, you can enable `--small-debug`:
 
 ```bash
-python main.py \
+python train.py \
   --data-path /path/to/rdr0_splits \
   --epochs 1 \
   --batch-size 2 \
@@ -188,27 +191,31 @@ During training, the following artifacts are produced:
 ## 5. Project structure
 
 ```text
-rainpred_project/
-├─ main.py
+RainPredictor/
+├─ train.py
+├─ predict.py
 ├─ README.md
 ├─ requirements.txt
-└─ training/
-   ├─ __init__.py
+├─ utils/
+│  ├─ make_splits.py
+│  └─ compare.py
+└─ rainpred/
    ├─ config.py
-   ├─ utils.py
    ├─ data.py
+   ├─ geo_io.py
    ├─ model.py
+   ├─ utils.py
    ├─ metrics.py
    └─ train_utils.py
 ```
 
-- `training/config.py`: default hyperparameters and paths.
-- `training/utils.py`: seeding and benchmarking helpers.
-- `training/data.py`: `RadarDataset`, augmentations, and dataloaders.
-- `training/model.py`: `RainPredRNN` definition (encoder, transformer, decoder).
-- `training/metrics.py`: scalar metrics, confusion matrix, evaluation report.
-- `training/train_utils.py`: training loop per epoch and prediction/target saving.
-- `main.py`: CLI-based training entry point tying everything together.
+- `rainpred/config.py`: default hyperparameters and paths.
+- `rainpred/utils.py`: seeding and benchmarking helpers.
+- `rainpred/data.py`: `RadarDataset`, augmentations, and dataloaders.
+- `rainpred/model.py`: `RainPredRNN` definition (encoder, transformer, decoder).
+- `rainpred/metrics.py`: scalar metrics, confusion matrix, evaluation report.
+- `rainpred/train_utils.py`: training loop per epoch and prediction/target saving.
+- `train.py`: CLI-based training entry point tying everything together.
 
 ## 6. How to reproduce your experiments
 
@@ -222,7 +229,7 @@ rainpred_project/
    `val/` subdirectories containing `.tif`/`.tiff` files.
 5. Run training with explicit paths and hyperparameters:
    ```bash
-   python main.py \
+   python train.py \
      --data-path /absolute/path/to/DATA_ROOT \
      --val-preview-root /absolute/path/to/previews \
      --runs-dir /absolute/path/to/runs \

@@ -12,18 +12,18 @@ This project implements a radar nowcasting model that:
 - Provides:
   - `train.py` for training,
   - `predict.py` for m→n inference,
-  - `compare.py` for quick visual comparison in lon/lat.
+  - `utils/compare.py` for quick visual comparison in lon/lat.
 
 ## Documentation
 
 - [Training guide](docs/train.md) — end-to-end training workflow and experiment notes.
 - [Inference guide](docs/predict.md) — minimal inference-only usage.
-- [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics.
-- [Dataset downloader](docs/download_dataset.md) — fetch radar GeoTIFF sequences from a base URL.
-- [Dataset splitter](docs/make_splits.md) — create train/val/test splits for GeoTIFF datasets.
-- [Radar metadata inspector](docs/radar_info.md) — inspect VMI GeoTIFF values and stats.
-- [Radar viewer](docs/radar_viewer.md) — visualize radar TIFF/GeoTIFF files with LUTs.
-- [Sequence selector](docs/select_sequences.md) — scan datasets and select GeoTIFF sequences.
+- [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics (`utils/compare.py`).
+- [Dataset downloader](docs/download_dataset.md) — fetch radar GeoTIFF sequences from a base URL (`utils/download_dataset.py`).
+- [Dataset splitter](docs/make_splits.md) — create train/val/test splits for GeoTIFF datasets (`utils/make_splits.py`).
+- [Radar metadata inspector](docs/radar_info.md) — inspect VMI GeoTIFF values and stats (`utils/radar_info.py`).
+- [Radar viewer](docs/radar_viewer.md) — visualize radar TIFF/GeoTIFF files with LUTs (`utils/radar_viewer.py`).
+- [Sequence selector](docs/select_sequences.md) — scan datasets and select GeoTIFF sequences (`utils/select_sequences.py`).
 
 ## 1. Example Radar-style Naming
 
@@ -115,7 +115,7 @@ Options:
 ## 4. Visual Comparison in Physical Coordinates
 
 ```bash
-python compare.py \
+python utils/compare.py \
   --input /data/radar_seq/rdr0_d01_20251202Z1800_VMI.tiff \
   --pred  /data/preds/rdr0_d01_20251202Z1810_VMI.tiff \
   --title "t=1800 vs t+1 prediction"
@@ -134,7 +134,7 @@ This script:
 - `set_seed(15)` is called in the data and training code.
 - Hyperparameters can be controlled from:
   - `rainpred/config.py` (defaults),
-  - CLI flags in `train.py` and `infer_sequence.py`.
+  - CLI flags in `train.py` and `predict.py`.
 - All GeoTIFF outputs keep the original CRS and transform so that they can be
   consumed by GIS software or downstream hydrological models directly.
 

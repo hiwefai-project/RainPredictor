@@ -1,8 +1,8 @@
-# README.md — Weather Radar GeoTIFF Sequence Scanner
+# Sequence selector (`utils/select_sequences.py`)
 
 ## Overview
 
-`select_sequences.py` is a Python tool for scanning large structured weather radar datasets stored as GeoTIFF files.  
+`utils/select_sequences.py` is a Python tool for scanning large structured weather radar datasets stored as GeoTIFF files.  
 It validates files, computes reflectivity statistics, detects time-consistent 10-minute radar sequences, and generates multiple CSV reports.
 
 The tool is designed to work with datasets organized as:
@@ -73,13 +73,28 @@ pip install rasterio numpy
 ### Basic Example
 
 ```bash
-python select_sequences.py   --base-path /projects/data/weather_radar/600x700   --threshold 20   --rate 0.01   --csv sequences.csv
+python utils/select_sequences.py \
+  --base-path /projects/data/weather_radar/600x700 \
+  --threshold 20 \
+  --rate 0.01 \
+  --csv sequences.csv
 ```
 
 ## Full Example with All Features
 
 ```bash
-python select_sequences.py   --base-path /projects/data/weather_radar/600x700   --prefix rdr0_d01_   --postfix _VMI.tiff   --threshold 25   --rate 0.02   --min-length 36   --csv selected_sequences.csv   --missing-csv missing_frames.csv   --delete-invalid   --verbose   --log-level DEBUG
+python utils/select_sequences.py \
+  --base-path /projects/data/weather_radar/600x700 \
+  --prefix rdr0_d01_ \
+  --postfix _VMI.tiff \
+  --threshold 25 \
+  --rate 0.02 \
+  --min-length 36 \
+  --csv selected_sequences.csv \
+  --missing-csv missing_frames.csv \
+  --delete-invalid \
+  --verbose \
+  --log-level DEBUG
 ```
 
 ## Command-Line Options
@@ -151,4 +166,3 @@ MIT License (unless otherwise specified)
 
 Raffaele Montella  
 University of Naples "Parthenope"
-
