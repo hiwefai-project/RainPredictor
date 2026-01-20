@@ -1,9 +1,8 @@
 # RainPredictor – Hybrid Training + Inference (GeoTIFF, Full Resolution)
 
-![Architecture and Data Flow](docs/figures/rainpredictor.png)
+This repository focuses on radar nowcasting and aligns with how the Italian Civil Protection Department’s Radar Platform presents national-scale meteorological information, namely through real-time processing of raw data from the national radar network, along with rain and temperature station networks, satellite observations, and lightning network data [link](https://mappe.protezionecivile.gov.it/en/risks-maps-and-dashboards/radar-map/). 
 
-This repository focuses on radar nowcasting and is aligned with how the Italian Civil Protection Department’s Radar Platform presents national-scale meteorological information, namely through real-time processing of raw data from the national radar network alongside rain and temperature station networks, satellite observations, and lightning network data. 
-The Radar Platform highlights key products such as VMI (Vertical Maximum Intensity) and SRI (Surface Rainfall Intensity) updated every 5 minutes, cumulative SRT (Surface Rainfall Total) for the last 1–24 hours updated hourly, and temperature maps updated hourly, which motivates the temporal resolution and product framing used by this project. 
+![Architecture and Data Flow](docs/figures/rainpredictor.png)
 
 This project implements a radar nowcasting model that:
 
