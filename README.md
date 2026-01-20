@@ -1,5 +1,7 @@
 # RainPredictor – Hybrid Training + Inference (GeoTIFF, Full Resolution)
 
+![Architecture and Data Flow](docs/figures/rainpredictor.png)
+
 This project implements a radar nowcasting model that:
 
 - Trains on GeoTIFF radar images at native resolution (no resize).
