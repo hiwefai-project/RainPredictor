@@ -15,15 +15,15 @@ It generates side‑by‑side comparison panels, computes verification metrics, 
 - **Robust TIFF/GeoTIFF reader** (supports rasterio or PIL)
 - **NaN‑safe and inf‑safe rendering**
 - **Colorbar placed outside** image area (no overlap)
-- **Per-frame metrics**, including  
+- **Optional per-frame metrics** (enable with `--metrics`), including  
   - RMSE  
   - MSE  
   - MAE  
   - Bias  
   - Correlation coefficient
-- **Overall metrics** across the full sequence
-- **Metrics panel** plotted below the images
-- **Optional JSON export** (`--metrics-json`) for post-processing
+- **Optional overall metrics** across the full sequence (enable with `--metrics`)
+- **Optional metrics panel** plotted below the images (enable with `--metrics`)
+- **Optional JSON export** (`--metrics-json`, requires `--metrics`) for post-processing
 - Logging support (`--log-level`)
 
 ---
@@ -122,10 +122,16 @@ python compare.py \
 --orientation {landscape,portrait}
 ```
 
+### Enable metrics overlays and plots
+
+```bash
+--metrics
+```
+
 ### Export metrics to JSON
 
 ```bash
---metrics-json metrics.json
+--metrics --metrics-json metrics.json
 ```
 
 ---
@@ -175,8 +181,8 @@ The generated figure contains:
 
 - Left column: **Truth**
 - Right column: **Pred**
-- Per-frame metrics overlay
-- Bottom metrics graph (RMSE, MAE, Bias)
+- Per-frame metrics overlay (when `--metrics` is enabled)
+- Bottom metrics graph (RMSE, MAE, Bias) when `--metrics` is enabled
 - External colorbar with optional palette label
 
 ---
@@ -186,7 +192,7 @@ The generated figure contains:
 1. Compare sequences visually  
 2. Export metrics:  
    ```bash
-   --metrics-json metrics.json
+   --metrics --metrics-json metrics.json
    ```
 3. Analyze model performance across lead times  
 4. Tune model & architecture  
@@ -210,4 +216,3 @@ Just ask — I can extend the tool.
 ## 📝 License
 
 MIT License
-
