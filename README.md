@@ -1,6 +1,6 @@
 # RainPredictor – Hybrid Training + Inference (GeoTIFF, Full Resolution)
 
-This project implements a radar nowcasting model (`RainPredRNN`) that:
+This project implements a radar nowcasting model that:
 
 - Trains on GeoTIFF radar images at native resolution (no resize).
 - Uses zero-padding (bottom/right) to satisfy UNet + Transformer patch constraints.
@@ -13,7 +13,7 @@ This project implements a radar nowcasting model (`RainPredRNN`) that:
 ## Documentation
 
 - [Training guide](docs/train.md) — end-to-end training workflow and experiment notes.
-- [Inference guide](docs/predict.md) — minimal inference-only usage for RainPredRNN.
+- [Inference guide](docs/predict.md) — minimal inference-only usage.
 - [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics.
 - [Dataset downloader](docs/download_dataset.md) — fetch radar GeoTIFF sequences from a base URL.
 - [Dataset splitter](docs/make_splits.md) — create train/val/test splits for GeoTIFF datasets.
