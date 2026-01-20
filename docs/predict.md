@@ -99,6 +99,8 @@ python predict.py \
 - `--resample-factor`:
   - Optional scale factor to resample input frames in-place before inference.
   - Use `1.0` to leave inputs unchanged; values must be greater than 0.
+- `--metrics-json`:
+  - Optional path to write AI-friendly JSON diagnostics (use `-` for stdout).
 
 Example:
 
@@ -118,6 +120,18 @@ This will:
 3. Predict the next 6 frames.
 4. Save them to `./predictions/`, using time-consistent basenames when the
    input filenames contain timestamps (see below).
+
+To emit structured diagnostics for automation or debugging, include:
+
+```bash
+python predict.py \
+  --checkpoint /models/rainpred/best_model.pth \
+  --input-dir /data/radar_sequence_example \
+  --m 18 \
+  --n 6 \
+  --output-dir ./predictions \
+  --metrics-json ./predict_metrics.json
+```
 
 ## 5. Output naming and time consistency
 

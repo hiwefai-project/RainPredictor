@@ -86,6 +86,8 @@ python train.py \
 ```
 
 Use `--small-debug` to run a tiny subset for quick testing.
+Use `--metrics-json /path/to/train_metrics.json` to emit AI-friendly JSON
+diagnostics after each epoch.
 
 TensorBoard:
 
@@ -111,6 +113,7 @@ Options:
 - `--pattern .tif` (default) or `.tiff` depending on files.
 - `--cpu` to force CPU inference.
 - `--resample-factor` to resample input frames in-place before inference (e.g., `0.5` halves resolution).
+- `--metrics-json` to emit AI-friendly JSON diagnostics for predictions.
 
 ## 4. Visual Comparison in Physical Coordinates
 

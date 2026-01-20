@@ -117,6 +117,7 @@ python train.py \
 - `--lr`: learning rate for Adam.
 - `--num-workers`: number of `DataLoader` workers.
 - `--pred-length`: number of future frames to predict.
+- `--metrics-json`: optional path to write AI-friendly JSON diagnostics after each epoch (`-` logs to stdout).
 
 ### Small-debug mode
 
@@ -141,6 +142,20 @@ This is useful for quickly verifying that:
 - The dataset paths and TIFFs are readable.
 - The model forward/backward passes work.
 - Logging, checkpointing, and preview saving work end-to-end.
+
+### AI-friendly JSON diagnostics
+
+To emit structured metrics for downstream diagnostics or suggestions tooling,
+use `--metrics-json`:
+
+```bash
+python train.py \
+  --data-path /path/to/rdr0_splits \
+  --metrics-json /path/to/train_metrics.json
+```
+
+The JSON output contains per-epoch metrics, timing, confusion matrices, and a
+`suggestions` list that can be consumed by automated analysis.
 
 ## 3. Reproducibility notes
 
