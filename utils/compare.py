@@ -164,7 +164,7 @@ def scan_directory_for_tiffs(dir_path: Path):
     return mapping
 
 
-def read_tiff(path: Path) -> np.ndarray:
+def read_tiff(path: Path, nodata_value: float | None) -> np.ndarray:
     """
     Read the first band of a TIFF/GeoTIFF as a float32 numpy array.
     Nodata values (if present) are converted to NaN.
@@ -172,6 +172,8 @@ def read_tiff(path: Path) -> np.ndarray:
     Parameters
     ----------
     path : Path
+    nodata_value : float | None
+        Optional override for the nodata value to mask.
 
     Returns
     -------
@@ -181,19 +183,32 @@ def read_tiff(path: Path) -> np.ndarray:
     logger.debug("Reading TIFF: %s", path)
 
     if HAS_RASTERIO:
+        # Use rasterio to read the first band for GeoTIFF-aware IO.
         with rasterio.open(path) as src:
+            # Cast to float32 to allow NaN masking downstream.
             data = src.read(1).astype(np.float32)
-            nodata = src.nodata
+            # Prefer the CLI-provided nodata override when supplied.
+            nodata = nodata_value if nodata_value is not None else src.nodata
+            # Mask nodata entries to NaN so they do not affect stats.
             if nodata is not None:
                 data[data == nodata] = np.nan
+        # Return the masked array for downstream plotting/metrics.
         return data
 
     if HAS_PIL:
+        # Read the TIFF via Pillow when rasterio is unavailable.
         im = Image.open(path)
+        # Convert to float32 so we can insert NaNs if needed.
         arr = np.array(im, dtype=np.float32)
+        # Collapse multiband data to the first channel for consistency.
         if arr.ndim > 2:
             # Take first channel if multi-band
             arr = arr[..., 0]
+        # Apply the nodata override since PIL has no nodata metadata.
+        if nodata_value is not None:
+            # Replace nodata with NaN so color range ignores it.
+            arr[arr == nodata_value] = np.nan
+        # Return the masked array.
         return arr
 
     raise RuntimeError(
@@ -353,6 +368,7 @@ def plot_sequence(
     title: str | None,
     cmap,
     norm,
+    nodata_value: float | None,
     orientation: str = "landscape",
     metrics_json: Path | None = None,
 ):
@@ -384,9 +400,13 @@ def plot_sequence(
     all_pred: list[np.ndarray] = []
 
     for ts, truth_path, pred_path in pairs:
-        truth_data = read_tiff(truth_path)
-        pred_data = read_tiff(pred_path)
+        # Read the truth TIFF while masking nodata values.
+        truth_data = read_tiff(truth_path, nodata_value)
+        # Read the prediction TIFF while masking nodata values.
+        pred_data = read_tiff(pred_path, nodata_value)
+        # Cache arrays for plotting and metrics.
         cached.append((ts, truth_data, pred_data))
+        # Accumulate for global min/max computation.
         all_truth.append(truth_data)
         all_pred.append(pred_data)
 
@@ -721,6 +741,15 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--nodata",
+        type=float,
+        default=None,
+        help=(
+            "Optional nodata value to mask in TIFFs so it is excluded from "
+            "color scaling and metrics."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -763,6 +792,7 @@ def main():
         title=args.title,
         cmap=cmap,
         norm=norm,
+        nodata_value=args.nodata,
         orientation=args.orientation,
         metrics_json=metrics_json_path,
     )
