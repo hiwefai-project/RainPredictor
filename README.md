@@ -123,6 +123,8 @@ This script:
 - Plots input and predicted frames side-by-side in lon/lat.
 - Adds colorbars for quick qualitative assessment.
 
+![Truth vs prediced](docs/figures/compare_output.png)
+
 ## 5. Reproducibility Notes
 
 - `set_seed(15)` is called in the data and training code.
