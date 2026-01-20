@@ -1,7 +1,9 @@
 import os
 import argparse
 import datetime
+import json  # Serialize AI-friendly diagnostics to JSON.
 import logging  # Use the logging module for structured status output.
+import math  # Check metric values for finite diagnostics.
 
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -29,6 +31,95 @@ from rainpred.train_utils import train_epoch, save_val_previews
 
 # Create a module-level logger to replace print statements.
 logger = logging.getLogger(__name__)
+
+
+def _to_serializable_confusion_matrix(conf_matrix: object) -> list:
+    """Convert a confusion matrix into a JSON-serializable nested list."""
+    # Use NumPy-style tolist when available to preserve structure.
+    if hasattr(conf_matrix, "tolist"):
+        # Convert the array-like confusion matrix into nested Python lists.
+        return conf_matrix.tolist()
+    # Fall back to a list cast for already-iterable structures.
+    return list(conf_matrix)
+
+
+def _build_training_ai_metrics(
+    *,
+    epoch: int,
+    num_epochs: int,
+    train_loss: float,
+    val_metrics: dict,
+    conf_matrix: object,
+    csi_threshold: float,
+    best_val_total: float,
+    t_train: float,
+    t_val: float,
+) -> dict:
+    """Build an AI-friendly diagnostics payload with metrics and suggestions."""
+    # Start a suggestions list that downstream tools can consume.
+    suggestions: list[str] = []
+    # Fetch the composite validation metric for heuristics.
+    val_total = float(val_metrics.get("TOTAL", float("nan")))
+    # Fetch the CSI metric for rain/no-rain detection guidance.
+    val_csi = float(val_metrics.get("CSI", float("nan")))
+    # Flag non-finite values to help diagnose numerical instability.
+    if not math.isfinite(val_total) or not math.isfinite(train_loss):
+        # Suggest checking data normalization or learning rate when losses explode.
+        suggestions.append("Non-finite loss detected; verify data normalization and learning rate.")
+    # Flag low CSI values with an actionable data/threshold suggestion.
+    if math.isfinite(val_csi) and val_csi < 0.2:
+        # Suggest focusing on rain detection if CSI remains low.
+        suggestions.append("Low CSI: consider more rain events, threshold tuning, or class-balanced sampling.")
+    # Detect a large train/val gap as a possible overfitting signal.
+    if math.isfinite(val_total) and train_loss * 1.2 < val_total:
+        # Suggest regularization or augmentation when validation degrades.
+        suggestions.append("Validation TOTAL higher than train loss; consider regularization or more data.")
+
+    # Assemble the structured diagnostics payload for JSON output.
+    payload = {
+        # Track schema versioning to support future upgrades.
+        "schema_version": "v1",
+        # Identify the lifecycle stage for downstream filtering.
+        "stage": "train",
+        # Record the current epoch number (1-based for readability).
+        "epoch": epoch + 1,
+        # Record the configured number of epochs for context.
+        "num_epochs": num_epochs,
+        # Capture the training loss for this epoch.
+        "train_loss": float(train_loss),
+        # Capture validation metrics as a nested dictionary.
+        "val_metrics": {key: float(value) for key, value in val_metrics.items()},
+        # Capture the CSI threshold used during evaluation.
+        "csi_threshold_dbz": float(csi_threshold),
+        # Capture the best validation metric observed so far.
+        "best_val_total": float(best_val_total),
+        # Capture training/validation durations for performance diagnostics.
+        "timings_sec": {"train": float(t_train), "val": float(t_val)},
+        # Serialize the confusion matrix for downstream analytics.
+        "confusion_matrix": _to_serializable_confusion_matrix(conf_matrix),
+        # Add human-readable suggestions for next-step actions.
+        "suggestions": suggestions,
+        # Add an ISO timestamp to align logs with external systems.
+        "timestamp": datetime.datetime.now().isoformat(),
+    }
+    # Return the payload to the caller for writing.
+    return payload
+
+
+def _write_ai_metrics_json(path: str, records: list[dict]) -> None:
+    """Write AI-friendly diagnostics to JSON or log them when path is '-'."""
+    # Serialize the records to a formatted JSON string for readability.
+    json_payload = json.dumps(records, indent=2)
+    # Emit to logs when the sentinel "-" path is used.
+    if path == "-":
+        # Log the JSON payload to stdout via logging.
+        logger.info("[train] AI metrics JSON:\n%s", json_payload)
+        # Return early since we are not writing to disk.
+        return
+    # Open the output file in write mode to keep the latest diagnostics.
+    with open(path, "w", encoding="utf-8") as handle:
+        # Persist the JSON payload to disk for downstream tooling.
+        handle.write(json_payload)
 
 
 def main() -> None:
@@ -106,6 +197,15 @@ def main() -> None:
         default=15.0,
         help="Reflectivity threshold (dBZ) used for CSI during validation.",
     )
+    parser.add_argument(
+        "--metrics-json",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to write AI-friendly JSON diagnostics after each epoch "
+            "(use '-' to emit to stdout)."
+        ),
+    )
     args = parser.parse_args()
 
     # ---------------- setup ----------------
@@ -121,6 +221,10 @@ def main() -> None:
     resume_from = args.resume_from
     save_every = max(1, args.save_every)
     csi_threshold = args.csi_threshold
+    # Capture the optional JSON diagnostics output path.
+    metrics_json_path = args.metrics_json
+    # Initialize a list to accumulate epoch-by-epoch diagnostics.
+    metrics_json_records: list[dict] = []
 
     # Run name & directories
     if args.run_name is None:
@@ -256,6 +360,25 @@ def main() -> None:
         metrics_str = ", ".join(f"{k}: {float(v):.4f}" for k, v in val_metrics.items())
         # Log validation metrics and elapsed time for evaluation tracking.
         logger.info("\tVal %s  (%s)", metrics_str, hms(t_val))
+
+        # Build AI-friendly diagnostics when JSON output is requested.
+        if metrics_json_path:
+            # Create a structured payload with metrics and suggestions.
+            ai_metrics = _build_training_ai_metrics(
+                epoch=epoch,
+                num_epochs=num_epochs,
+                train_loss=train_loss,
+                val_metrics=val_metrics,
+                conf_matrix=conf_matrix,
+                csi_threshold=csi_threshold,
+                best_val_total=best_val_total,
+                t_train=t_train,
+                t_val=t_val,
+            )
+            # Append the payload for cumulative JSON output.
+            metrics_json_records.append(ai_metrics)
+            # Write the updated diagnostics to disk or stdout.
+            _write_ai_metrics_json(metrics_json_path, metrics_json_records)
 
         # log scalars
         train_writer.add_scalar("Loss", train_loss, epoch)

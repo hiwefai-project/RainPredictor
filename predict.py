@@ -2,6 +2,7 @@ import os
 import re
 import argparse
 import datetime as dt
+import json  # Serialize AI-friendly diagnostics to JSON.
 import logging  # Use the logging module for structured status output.
 import importlib.util  # Check optional dependencies without try/except around imports.
 from typing import List
@@ -14,6 +15,104 @@ from rainpred.geo_io import load_sequence_from_dir, save_predictions_as_geotiff
 
 # Create a module-level logger to replace print-based status messages.
 logger = logging.getLogger(__name__)
+
+
+def _summarize_tensor(tensor: torch.Tensor) -> dict:
+    """Return basic statistics for a tensor in a JSON-serializable dict."""
+    # Move the tensor to CPU to avoid GPU-only serialization issues.
+    tensor_cpu = tensor.detach().to("cpu")
+    # Compute the minimum value for range diagnostics.
+    min_val = float(tensor_cpu.min().item())
+    # Compute the maximum value for range diagnostics.
+    max_val = float(tensor_cpu.max().item())
+    # Compute the mean value for distribution diagnostics.
+    mean_val = float(tensor_cpu.mean().item())
+    # Return the summarized statistics as a dictionary.
+    return {"min": min_val, "max": max_val, "mean": mean_val}
+
+
+def _build_predict_ai_metrics(
+    *,
+    args: argparse.Namespace,
+    device: torch.device,
+    input_frame_count: int,
+    output_frame_count: int,
+    step_minutes: int,
+    preds: torch.Tensor,
+    inference_seconds: float,
+    total_seconds: float,
+) -> dict:
+    """Build an AI-friendly diagnostics payload with inference metadata and suggestions."""
+    # Initialize a suggestions list for downstream automation.
+    suggestions: list[str] = []
+    # Suggest using GPU when available and not explicitly forced to CPU.
+    if args.cpu and torch.cuda.is_available():
+        # Encourage using CUDA for faster inference.
+        suggestions.append("CUDA is available; omit --cpu to speed up inference.")
+    # Highlight resampling so downstream consumers can track data changes.
+    if args.resample_factor != 1.0:
+        # Note that resampled inputs differ from original data resolution.
+        suggestions.append("Inputs were resampled; ensure this matches training resolution.")
+    # Flag unexpected output counts for troubleshooting.
+    if output_frame_count != args.n:
+        # Suggest verifying input/output settings when counts mismatch.
+        suggestions.append("Output frame count mismatch; verify --n and input availability.")
+    # Warn if the model is asked to predict too many frames relative to history.
+    if args.m <= args.n:
+        # Suggest using a longer input history to stabilize predictions.
+        suggestions.append("m <= n; consider using more input frames for stable forecasts.")
+
+    # Build the JSON-friendly diagnostics payload.
+    payload = {
+        # Track schema versioning to support future upgrades.
+        "schema_version": "v1",
+        # Identify the lifecycle stage for downstream filtering.
+        "stage": "predict",
+        # Record runtime configuration values for traceability.
+        "config": {
+            "checkpoint": args.checkpoint,
+            "input_dir": args.input_dir,
+            "output_dir": args.output_dir,
+            "m": int(args.m),
+            "n": int(args.n),
+            "cpu": bool(args.cpu),
+            "resample_factor": float(args.resample_factor),
+        },
+        # Record the selected device for performance context.
+        "device": str(device),
+        # Record how many input frames were used.
+        "input_frames": int(input_frame_count),
+        # Record how many output frames were produced.
+        "output_frames": int(output_frame_count),
+        # Record the inferred time step for naming consistency.
+        "step_minutes": int(step_minutes),
+        # Include lightweight statistics about the predictions.
+        "prediction_stats": _summarize_tensor(preds),
+        # Record timing diagnostics for performance analysis.
+        "timings_sec": {"inference": float(inference_seconds), "total": float(total_seconds)},
+        # Provide actionable suggestions for next steps.
+        "suggestions": suggestions,
+        # Add an ISO timestamp to align logs with external systems.
+        "timestamp": dt.datetime.now().isoformat(),
+    }
+    # Return the payload to the caller.
+    return payload
+
+
+def _write_ai_metrics_json(path: str, payload: dict) -> None:
+    """Write AI-friendly diagnostics to JSON or log them when path is '-'."""
+    # Serialize the payload to a formatted JSON string for readability.
+    json_payload = json.dumps(payload, indent=2)
+    # Emit to logs when the sentinel "-" path is used.
+    if path == "-":
+        # Log the JSON payload to stdout via logging.
+        logger.info("[predict] AI metrics JSON:\n%s", json_payload)
+        # Exit early since we are not writing to disk.
+        return
+    # Open the output file in write mode to keep the latest diagnostics.
+    with open(path, "w", encoding="utf-8") as handle:
+        # Persist the JSON payload to disk for downstream tooling.
+        handle.write(json_payload)
 
 
 # ----------------------------------------------------------------------
@@ -382,6 +481,15 @@ def parse_args() -> argparse.Namespace:
             "inference (e.g., 0.5 halves resolution, 2.0 doubles it)."
         ),
     )
+    parser.add_argument(
+        "--metrics-json",
+        # Accept a path where JSON diagnostics will be written.
+        type=str,
+        # Default to disabled so existing behavior is preserved.
+        default=None,
+        # Explain how to enable JSON diagnostics.
+        help="Optional path to write AI-friendly JSON diagnostics (use '-' for stdout).",
+    )
     return parser.parse_args()
 
 
@@ -404,6 +512,8 @@ def list_input_files(input_dir: str, pattern: str = ".tif") -> List[str]:
 def main() -> None:
     # Configure root logging once for the CLI entry point.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # Capture the start time for end-to-end timing diagnostics.
+    total_start = dt.datetime.now()
     args = parse_args()
 
     device = get_device(prefer_cpu=args.cpu)
@@ -448,12 +558,16 @@ def main() -> None:
     )
 
     # Run inference
+    # Record inference start time for performance metrics.
+    inference_start = dt.datetime.now()
     preds = run_inference(
         model=model,
         sequence_tensor=seq,
         device=device,
         n_future=args.n,
     )
+    # Compute inference duration in seconds.
+    inference_seconds = (dt.datetime.now() - inference_start).total_seconds()
 
     # Build output filenames consistent with input naming
     step = infer_time_step_minutes(paths)
@@ -469,6 +583,8 @@ def main() -> None:
         as_dbz=True,
         out_names=out_basenames,
     )
+    # Compute total runtime duration in seconds.
+    total_seconds = (dt.datetime.now() - total_start).total_seconds()
 
     # Log the checkpoint used to help with reproducibility.
     logger.info("[predict] Checkpoint used: %s", args.checkpoint)
@@ -479,6 +595,22 @@ def main() -> None:
     for p in saved_paths:
         # Log each saved filename for quick inspection.
         logger.info("  -> %s", os.path.basename(p))
+
+    # Write AI-friendly diagnostics when requested.
+    if args.metrics_json:
+        # Build the diagnostics payload for inference.
+        ai_metrics = _build_predict_ai_metrics(
+            args=args,
+            device=device,
+            input_frame_count=seq.shape[1],
+            output_frame_count=len(saved_paths),
+            step_minutes=step,
+            preds=preds,
+            inference_seconds=inference_seconds,
+            total_seconds=total_seconds,
+        )
+        # Persist the diagnostics payload to disk or stdout.
+        _write_ai_metrics_json(args.metrics_json, ai_metrics)
 
 
 if __name__ == "__main__":
