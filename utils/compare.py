@@ -371,6 +371,7 @@ def plot_sequence(
     nodata_value: float | None,
     orientation: str = "landscape",
     metrics_json: Path | None = None,
+    show_metrics: bool = False,  # Control whether metrics are computed and displayed.
 ):
     """
     Plot a sequence of frame pairs (truth vs pred).
@@ -389,8 +390,9 @@ def plot_sequence(
     If norm is provided (e.g. BoundaryNorm from a palette), it is used.
     Otherwise global vmin/vmax are computed and used.
 
-    Metrics (RMSE, MAE, Bias) are visualized in a graph below the frames.
-    Metrics can optionally be dumped to a JSON file.
+    Metrics (RMSE, MAE, Bias, R) are visualized in a graph below the frames
+    when enabled via the command line.
+    Metrics can optionally be dumped to a JSON file when enabled.
     """
     logger.info("Sequence mode: plotting %d frame pairs.", len(pairs))
 
@@ -418,67 +420,100 @@ def plot_sequence(
 
     nframes = len(cached)
 
-    # Precompute metrics (including RMSE) per frame
-    per_frame_metrics: list[dict] = []
-    for ts, truth_data, pred_data in cached:
-        m = compute_frame_metrics(truth_data, pred_data)
-        rmse = float(np.sqrt(m["mse"])) if np.isfinite(m["mse"]) else float("nan")
-        m_with_ts = {"timestamp": ts, "rmse": rmse}
-        m_with_ts.update(m)
-        per_frame_metrics.append(m_with_ts)
-        logger.debug(
-            "Metrics %s: MSE=%.4f, MAE=%.4f, Bias=%.4f, Corr=%.4f",
-            ts,
-            m["mse"],
-            m["mae"],
-            m["bias"],
-            m["corr"],
+    # Prepare metrics only when explicitly requested by the user.
+    per_frame_metrics: list[dict] = []  # Initialize the per-frame metrics container.
+    # Track overall metrics so we can annotate the metrics panel when enabled.
+    overall_with_rmse: dict[str, float] | None = None  # Placeholder for overall stats.
+    # Guard all metric computations behind the flag.
+    if show_metrics:  # Only compute metrics when the flag is enabled.
+        # Precompute metrics (including RMSE) per frame.
+        for ts, truth_data, pred_data in cached:  # Loop over each cached frame pair.
+            # Compute base metrics for this frame pair.
+            m = compute_frame_metrics(truth_data, pred_data)  # Compute base metrics.
+            # Derive RMSE from MSE for display.
+            rmse = (  # Compute RMSE from MSE when finite.
+                float(np.sqrt(m["mse"])) if np.isfinite(m["mse"]) else float("nan")
+            )
+            # Build a timestamped metrics payload for this frame.
+            m_with_ts = {"timestamp": ts, "rmse": rmse}  # Seed the metrics dict.
+            # Merge in the base metrics fields for output and plotting.
+            m_with_ts.update(m)  # Add MSE/MAE/Bias/Corr to the dict.
+            # Store the per-frame metrics for overlays and plotting.
+            per_frame_metrics.append(m_with_ts)  # Append for later plotting.
+            # Log per-frame diagnostics for debugging.
+            logger.debug(  # Emit per-frame metrics to the debug log.
+                "Metrics %s: MSE=%.4f, MAE=%.4f, Bias=%.4f, Corr=%.4f",
+                ts,  # Include the timestamp in the log entry.
+                m["mse"],  # Report the per-frame MSE.
+                m["mae"],  # Report the per-frame MAE.
+                m["bias"],  # Report the per-frame Bias.
+                m["corr"],  # Report the per-frame correlation.
+            )
+
+        # Aggregate metrics across all frames for overall reporting.
+        overall = compute_overall_metrics(all_truth, all_pred)  # Compute overall stats.
+        # Compute RMSE from the overall MSE.
+        overall_rmse = (  # Compute overall RMSE when MSE is finite.
+            float(np.sqrt(overall["mse"])) if np.isfinite(overall["mse"]) else float("nan")
+        )
+        # Store the overall metrics with RMSE for rendering.
+        overall_with_rmse = dict(overall)  # Copy the overall metrics dict.
+        # Attach RMSE to the overall metrics for display.
+        overall_with_rmse["rmse"] = overall_rmse  # Add RMSE to overall metrics.
+
+        # Emit a summary of the overall metrics to the log.
+        logger.info(  # Log the overall metrics for user visibility.
+            "Overall metrics: MSE=%.4f, MAE=%.4f, Bias=%.4f, Corr=%.4f",
+            overall["mse"],  # Include overall MSE in the log.
+            overall["mae"],  # Include overall MAE in the log.
+            overall["bias"],  # Include overall Bias in the log.
+            overall["corr"],  # Include overall correlation in the log.
         )
 
-    overall = compute_overall_metrics(all_truth, all_pred)
-    overall_rmse = (
-        float(np.sqrt(overall["mse"])) if np.isfinite(overall["mse"]) else float("nan")
-    )
-    overall_with_rmse = dict(overall)
-    overall_with_rmse["rmse"] = overall_rmse
-
-    logger.info(
-        "Overall metrics: MSE=%.4f, MAE=%.4f, Bias=%.4f, Corr=%.4f",
-        overall["mse"],
-        overall["mae"],
-        overall["bias"],
-        overall["corr"],
-    )
-
-    # Optional JSON dump of metrics
-    if metrics_json is not None:
-        logger.info("Writing metrics JSON to %s", metrics_json)
-        metrics_payload = {
-            "per_frame": per_frame_metrics,
-            "overall": overall_with_rmse,
-        }
-        with metrics_json.open("w") as f:
-            json.dump(metrics_payload, f, indent=2)
-        logger.info("Metrics JSON successfully written.")
+        # Optional JSON dump of metrics when enabled.
+        if metrics_json is not None:  # Export metrics when a path is provided.
+            # Announce the JSON export location in the log.
+            logger.info("Writing metrics JSON to %s", metrics_json)  # Log output path.
+            # Build the JSON payload for downstream analysis.
+            metrics_payload = {  # Assemble payload with per-frame and overall stats.
+                "per_frame": per_frame_metrics,
+                "overall": overall_with_rmse,
+            }
+            # Persist the metrics to disk as formatted JSON.
+            with metrics_json.open("w") as f:  # Open the JSON output file.
+                json.dump(metrics_payload, f, indent=2)  # Write pretty JSON.
+            # Confirm the JSON write succeeded.
+            logger.info("Metrics JSON successfully written.")  # Log completion.
+    # Warn if metrics JSON is requested while metrics are disabled.
+    elif metrics_json is not None:  # Handle a metrics JSON request without metrics.
+        # Notify the user that metrics export is skipped without metrics enabled.
+        logger.warning(  # Emit a warning about the skipped export.
+            "Metrics JSON requested without --metrics; skipping metrics export."
+        )
 
     # ------------------------------------------------------------------
     # Figure layout using GridSpec
     # ------------------------------------------------------------------
     import matplotlib.gridspec as gridspec
 
-    if orientation == "landscape":
+    if orientation == "landscape":  # Use the landscape layout when requested.
         # Frames laid out horizontally by time:
-        # row 0: Truth, row 1: Pred, row 2: metrics
-        fig_width = max(10, 3 * nframes)
-        fig_height = 6
-        height_ratios = [1.0, 1.0, 0.7]
+        # row 0: Truth, row 1: Pred, row 2: metrics (optional)
+        fig_width = max(10, 3 * nframes)  # Scale width by frame count.
+        # Keep extra height only when the metrics panel is enabled.
+        fig_height = 6 if show_metrics else 5  # Use taller figures with metrics.
+        # Set height ratios based on whether metrics are shown.
+        height_ratios = [1.0, 1.0, 0.7] if show_metrics else [1.0, 1.0]
 
-        fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-        gs = gridspec.GridSpec(
-            nrows=3,
-            ncols=nframes,
-            figure=fig,
-            height_ratios=height_ratios,
+        fig = plt.figure(  # Create the figure with a constrained layout.
+            figsize=(fig_width, fig_height),
+            constrained_layout=True,
+        )
+        gs = gridspec.GridSpec(  # Define the grid layout for the figure.
+            nrows=3 if show_metrics else 2,  # Add a metrics row when enabled.
+            ncols=nframes,  # Use one column per timestamp.
+            figure=fig,  # Attach the GridSpec to the figure.
+            height_ratios=height_ratios,  # Apply height ratios to rows.
         )
 
         axes_img = np.empty((2, nframes), dtype=object)
@@ -513,42 +548,48 @@ def plot_sequence(
             ax_truth.axis("off")
             ax_pred.axis("off")
 
-            # Annotate per-frame metrics on the Truth panel
-            m = per_frame_metrics[col_idx]
-            metric_text = (
-                f"RMSE={m['rmse']:.2f}\n"
-                f"MAE={m['mae']:.2f}\n"
-                f"Bias={m['bias']:.2f}\n"
-                f"R={m['corr']:.2f}"
-            )
-            ax_truth.text(
-                0.01,
-                0.02,
-                metric_text,
-                transform=ax_truth.transAxes,
-                fontsize=7,
-                va="bottom",
-                ha="left",
-                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            )
+            # Annotate per-frame metrics on the Truth panel when enabled.
+            if show_metrics:  # Only add overlays when metrics are enabled.
+                # Fetch metrics for this frame.
+                m = per_frame_metrics[col_idx]  # Select metrics by column index.
+                # Compose a multi-line text label for the overlay.
+                metric_text = (  # Build a multi-line overlay string.
+                    f"RMSE={m['rmse']:.2f}\n"
+                    f"MAE={m['mae']:.2f}\n"
+                    f"Bias={m['bias']:.2f}\n"
+                    f"R={m['corr']:.2f}"
+                )
+                # Place the metrics in the bottom-left corner of the panel.
+                ax_truth.text(  # Render the metric overlay text.
+                    0.01,  # Use a small left margin.
+                    0.02,  # Use a small bottom margin.
+                    metric_text,  # Draw the metrics text.
+                    transform=ax_truth.transAxes,  # Place in axes coordinates.
+                    fontsize=7,  # Use a small font for overlay readability.
+                    va="bottom",  # Anchor the text to the bottom.
+                    ha="left",  # Align the text to the left.
+                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
+                )
 
             last_im = im_pred or im_truth
 
-        # Metrics panel: bottom row, spanning all columns
-        ax_metrics = fig.add_subplot(gs[2, :])
+        # Metrics panel: bottom row, spanning all columns, when enabled.
+        ax_metrics = fig.add_subplot(gs[2, :]) if show_metrics else None  # Optional.
 
     else:
         # Portrait: one row per timestamp, 2 columns (Truth, Pred), last row metrics
-        fig_width = 10
-        fig_height = max(4, 2 * nframes + 2)
-        height_ratios = [1.0] * nframes + [0.6]
+        fig_width = 10  # Fix the width for portrait layouts.
+        # Scale height to include metrics panel only when enabled.
+        fig_height = max(4, 2 * nframes + (2 if show_metrics else 0))  # Scale height.
+        # Build height ratios with optional metrics row.
+        height_ratios = [1.0] * nframes + ([0.6] if show_metrics else [])  # Ratios.
 
         fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
         gs = gridspec.GridSpec(
-            nrows=nframes + 1,
-            ncols=2,
-            figure=fig,
-            height_ratios=height_ratios,
+            nrows=nframes + (1 if show_metrics else 0),  # Add a row for metrics.
+            ncols=2,  # Two columns for truth and prediction.
+            figure=fig,  # Attach to the figure.
+            height_ratios=height_ratios,  # Apply height ratios.
         )
 
         axes_img = np.empty((nframes, 2), dtype=object)
@@ -578,65 +619,84 @@ def plot_sequence(
             ax_truth.axis("off")
             ax_pred.axis("off")
 
-            # Annotate per-frame metrics on the Truth panel
-            m = per_frame_metrics[row_idx]
-            metric_text = (
-                f"RMSE={m['rmse']:.2f}\n"
-                f"MAE={m['mae']:.2f}\n"
-                f"Bias={m['bias']:.2f}\n"
-                f"R={m['corr']:.2f}"
-            )
-            ax_truth.text(
-                0.01,
-                0.02,
-                metric_text,
-                transform=ax_truth.transAxes,
-                fontsize=8,
-                va="bottom",
-                ha="left",
-                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            )
+            # Annotate per-frame metrics on the Truth panel when enabled.
+            if show_metrics:  # Only draw metrics overlays when enabled.
+                # Pull the metrics for this timestamp.
+                m = per_frame_metrics[row_idx]  # Select metrics by row index.
+                # Build the overlay string for this frame.
+                metric_text = (  # Compose the per-frame metrics text.
+                    f"RMSE={m['rmse']:.2f}\n"
+                    f"MAE={m['mae']:.2f}\n"
+                    f"Bias={m['bias']:.2f}\n"
+                    f"R={m['corr']:.2f}"
+                )
+                # Paint the metrics box onto the truth panel.
+                ax_truth.text(  # Render the text overlay on the truth axis.
+                    0.01,  # Use a left margin.
+                    0.02,  # Use a bottom margin.
+                    metric_text,  # Add the text content.
+                    transform=ax_truth.transAxes,  # Position in axes coords.
+                    fontsize=8,  # Slightly larger font for portrait mode.
+                    va="bottom",  # Anchor the text to the bottom.
+                    ha="left",  # Align left for readability.
+                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),  # Box.
+                )
 
             last_im = im_pred or im_truth
 
-        # Metrics panel: bottom row, spanning both columns
-        ax_metrics = fig.add_subplot(gs[-1, :])
+        # Metrics panel: bottom row, spanning both columns, when enabled.
+        ax_metrics = fig.add_subplot(gs[-1, :]) if show_metrics else None  # Optional.
 
-    # Metrics graph (common to both orientations)
-    frame_labels = [ts[-4:] for ts, _, _ in cached]  # use hhmm as short label
-    rmse_vals = [m["rmse"] for m in per_frame_metrics]
-    mae_vals = [m["mae"] for m in per_frame_metrics]
-    bias_vals = [m["bias"] for m in per_frame_metrics]
+    # Metrics graph (common to both orientations) when enabled.
+    if show_metrics and ax_metrics is not None and overall_with_rmse is not None:
+        # Use hhmm as short labels for the x-axis.
+        frame_labels = [ts[-4:] for ts, _, _ in cached]  # Extract hhmm labels.
+        # Gather metric series for plotting.
+        rmse_vals = [m["rmse"] for m in per_frame_metrics]  # Collect RMSE values.
+        mae_vals = [m["mae"] for m in per_frame_metrics]  # Collect MAE values.
+        bias_vals = [m["bias"] for m in per_frame_metrics]  # Collect Bias values.
 
-    x = np.arange(nframes)
+        # Build the x-axis positions for each frame.
+        x = np.arange(nframes)  # Use consecutive indices for frames.
 
-    ax_metrics.plot(x, rmse_vals, marker="o", label="RMSE")
-    ax_metrics.plot(x, mae_vals, marker="s", label="MAE")
-    ax_metrics.plot(x, bias_vals, marker="^", label="Bias")
+        # Plot the RMSE series.
+        ax_metrics.plot(x, rmse_vals, marker="o", label="RMSE")  # Plot RMSE.
+        # Plot the MAE series.
+        ax_metrics.plot(x, mae_vals, marker="s", label="MAE")  # Plot MAE.
+        # Plot the Bias series.
+        ax_metrics.plot(x, bias_vals, marker="^", label="Bias")  # Plot Bias.
 
-    ax_metrics.set_xticks(x)
-    ax_metrics.set_xticklabels(frame_labels, rotation=45)
-    ax_metrics.set_xlabel("Time (hhmm)")
-    ax_metrics.set_ylabel("Error (dBZ)")
-    ax_metrics.grid(True, linestyle="--", alpha=0.3)
-    ax_metrics.legend(loc="upper right", fontsize=8)
+        # Configure the x-axis tick placement.
+        ax_metrics.set_xticks(x)  # Use frame indices as tick positions.
+        # Label each tick with the hhmm timestamp suffix.
+        ax_metrics.set_xticklabels(frame_labels, rotation=45)  # Add tick labels.
+        # Label the x-axis for clarity.
+        ax_metrics.set_xlabel("Time (hhmm)")  # Describe the x-axis.
+        # Label the y-axis with the units.
+        ax_metrics.set_ylabel("Error (dBZ)")  # Describe the y-axis.
+        # Add a light grid for readability.
+        ax_metrics.grid(True, linestyle="--", alpha=0.3)  # Add grid lines.
+        # Add a legend for the plotted series.
+        ax_metrics.legend(loc="upper right", fontsize=8)  # Display legend.
 
-    # Add overall metrics as a text box
-    overall_text = (
-        f"Overall: RMSE={overall_with_rmse['rmse']:.2f}, "
-        f"MAE={overall['mae']:.2f}, Bias={overall['bias']:.2f}, "
-        f"R={overall['corr']:.2f}"
-    )
-    ax_metrics.text(
-        0.01,
-        0.95,
-        overall_text,
-        transform=ax_metrics.transAxes,
-        fontsize=9,
-        va="top",
-        ha="left",
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),
-    )
+        # Add overall metrics as a text box.
+        overall_text = (  # Compose the overall metrics string.
+            f"Overall: RMSE={overall_with_rmse['rmse']:.2f}, "
+            f"MAE={overall_with_rmse['mae']:.2f}, "
+            f"Bias={overall_with_rmse['bias']:.2f}, "
+            f"R={overall_with_rmse['corr']:.2f}"
+        )
+        # Place the overall metrics in the top-left of the metrics panel.
+        ax_metrics.text(  # Draw the overall metrics text box.
+            0.01,  # Use a left margin.
+            0.95,  # Use a top margin.
+            overall_text,  # Provide the text content.
+            transform=ax_metrics.transAxes,  # Position in axes coordinates.
+            fontsize=9,  # Use a readable font size.
+            va="top",  # Anchor the text to the top.
+            ha="left",  # Align text to the left.
+            bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),  # Box styling.
+        )
 
     # Colorbar on the right, outside the image panels
     if last_im is not None:
@@ -741,6 +801,13 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--metrics",  # CLI flag name for enabling metrics output.
+        action="store_true",  # Store True when the flag is present.
+        help=(  # Describe what enabling metrics does.
+            "Enable RMSE/MAE/Bias/R metrics overlays, plots, and optional JSON export."
+        ),
+    )
+    parser.add_argument(
         "--nodata",
         type=float,
         default=None,
@@ -786,6 +853,13 @@ def main():
     save_path = Path(args.save).resolve() if args.save else None
     metrics_json_path = Path(args.metrics_json).resolve() if args.metrics_json else None
 
+    # Ensure metrics JSON export is only attempted when metrics are enabled.
+    if metrics_json_path is not None and not args.metrics:
+        # Inform the user that metrics need to be enabled for JSON output.
+        logger.error("--metrics-json requires --metrics to be enabled.")
+        # Exit with a non-zero status to signal misconfiguration.
+        raise SystemExit(2)
+
     plot_sequence(
         pairs=pairs,
         save_path=save_path,
@@ -795,6 +869,7 @@ def main():
         nodata_value=args.nodata,
         orientation=args.orientation,
         metrics_json=metrics_json_path,
+        show_metrics=args.metrics,  # Enable metrics visualization when requested.
     )
 
 
