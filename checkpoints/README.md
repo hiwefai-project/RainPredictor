@@ -8,7 +8,7 @@ wget https://data.meteo.uniparthenope.it/instruments/rdr0/hiwefai_best_model.tar
 tar -xvzf hiwefai_best_model.tar.gz
 
 rm hiwefai_best_model.tar.gz
-bash```
+```
 
 Test the RainPrediction model with different trained modes.
 Check which one works better with your data using utils/compare.py
