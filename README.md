@@ -1,5 +1,8 @@
 # RainPredictor – Hybrid Training + Inference (GeoTIFF, Full Resolution)
 
+RainPredictor delivers end-to-end radar nowcasting, training on full-resolution GeoTIFF sequences and generating
+future precipitation frames that preserve geospatial metadata for downstream GIS workflows.
+
 This repository focuses on radar nowcasting and aligns with how the Italian Civil Protection Department’s Radar Platform presents national-scale meteorological information, namely through real-time processing of raw data from the national radar network, along with rain and temperature station networks, satellite observations, and lightning network data [link](https://mappe.protezionecivile.gov.it/en/risks-maps-and-dashboards/radar-map/). 
 
 ![Architecture and Data Flow](docs/figures/rainpredictor.png)
@@ -20,6 +23,7 @@ This project implements a radar nowcasting model that:
 - [Getting started guide](docs/getting_started.md) — step-by-step install, training, and prediction walkthrough.
 - [Training guide](docs/train.md) — end-to-end training workflow and experiment notes.
 - [Inference guide](docs/predict.md) — minimal inference-only usage.
+- [Model architecture](docs/model.md) — detailed description of the CNN + Transformer nowcasting model.
 - [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics (`utils/compare.py`).
 - [Dataset downloader](docs/download_dataset.md) — fetch radar GeoTIFF sequences from a base URL (`utils/download_dataset.py`).
 - [Dataset splitter](docs/make_splits.md) — create train/val/test splits for GeoTIFF datasets (`utils/make_splits.py`).
