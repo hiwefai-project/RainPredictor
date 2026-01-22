@@ -10,6 +10,9 @@ nowcasting model (`RainPredRNN`) composed of:
   - Benchmarking of train/val throughput.
   - Automatic saving of predictions and targets as TIFF.
   - Evaluation metrics and confusion matrix report.
+
+For a start-to-finish walkthrough that includes installation and prediction,
+see the [getting started guide](getting_started.md).
 ## 1. Data layout
 
 The code assumes that you have the entire dataset (including its directory substructure) in a single folder (for example, `dataset/`).

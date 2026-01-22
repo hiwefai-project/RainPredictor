@@ -4,6 +4,9 @@ The `predict.py` script is the **inference entry point** for this repository.
 It loads **m** GeoTIFF radar frames, predicts the next **n** frames with the
 `RainPredModel`, and writes GeoTIFF outputs that preserve geospatial metadata.
 
+For a full installation → training → prediction walkthrough, see the
+[getting started guide](getting_started.md).
+
 Key consistency points with `predict.py`:
 
 - Uses the `rainpred` package for model definition and GeoTIFF I/O.

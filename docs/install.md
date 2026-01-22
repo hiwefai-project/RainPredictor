@@ -66,6 +66,8 @@ python predict.py --help # Confirm the prediction entry point is available.
 
 Once dependencies are installed, follow the workflow guides:
 
+- **Getting started**: use the [getting started guide](getting_started.md) for a
+  full install → training → prediction walkthrough.
 - **Training**: use the [training guide](train.md) to prepare GeoTIFF splits and
   launch `train.py`.
 - **Prediction**: use the [inference guide](predict.md) to run `predict.py` on
