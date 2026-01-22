@@ -116,6 +116,7 @@ Options:
 - `--cpu` to force CPU inference.
 - `--resample-factor` to resample input frames in-place before inference (e.g., `0.5` halves resolution).
 - `--metrics-json` to emit AI-friendly JSON diagnostics for predictions.
+- When filenames include timestamps, output basenames start after the **last input file** in the directory.
 
 ## 4. Visual Comparison in Physical Coordinates
 

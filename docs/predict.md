@@ -154,8 +154,9 @@ rdr0_d01_20241023Z0710_VMI.tiff
 The script:
 
 1. Infers the time step (in minutes) from the **last two** input filenames.
-2. Uses the timestamp of the last input file as the base time.
-3. Generates `n` future names by stepping forward in minutes.
+2. Uses the timestamp of the **last input file in the directory** as the base time.
+3. Generates `n` future names by stepping forward in minutes (so the first
+   output name is the next time step after that last input).
 
 If the filenames do not match the pattern, it falls back to `pred_01.tif`,
 `pred_02.tif`, etc.
