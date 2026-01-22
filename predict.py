@@ -515,6 +515,8 @@ def main() -> None:
     # Capture the start time for end-to-end timing diagnostics.
     total_start = dt.datetime.now()
     args = parse_args()
+    # Gather the full sorted list of input files for naming and resampling decisions.
+    all_input_files = list_input_files(args.input_dir)
 
     device = get_device(prefer_cpu=args.cpu)
     # Log the device selection to clarify runtime hardware.
@@ -524,7 +526,7 @@ def main() -> None:
     # Optionally resample the input frames before loading for inference.
     if args.resample_factor != 1.0:
         # Determine the full sorted list so we resample the same frames used in inference.
-        input_files = list_input_files(args.input_dir)
+        input_files = all_input_files
         # Trim to the first m frames to match the inference sequence selection.
         input_files = input_files[:args.m]
         # Log how many files will be resampled for clarity.
@@ -569,9 +571,21 @@ def main() -> None:
     # Compute inference duration in seconds.
     inference_seconds = (dt.datetime.now() - inference_start).total_seconds()
 
-    # Build output filenames consistent with input naming
-    step = infer_time_step_minutes(paths)
-    out_basenames = generate_output_basenames(paths, n_future=args.n, step_minutes=step)
+    # Build output filenames consistent with input naming.
+    # Prefer all available input filenames so outputs start after the last file present.
+    # Fall back to the loaded sequence paths if the directory listing is empty.
+    naming_inputs = all_input_files or paths
+    # Infer the time step from the last two available input frames.
+    step = infer_time_step_minutes(naming_inputs)
+    # Generate output basenames that begin after the final input timestamp.
+    out_basenames = generate_output_basenames(
+        # Provide the full naming inputs list to anchor timestamps.
+        naming_inputs,
+        # Use the requested number of future frames for naming.
+        n_future=args.n,
+        # Apply the inferred minutes-per-step offset.
+        step_minutes=step,
+    )
 
     # Save predictions as GeoTIFF in dBZ
     saved_paths = save_predictions_as_geotiff(
