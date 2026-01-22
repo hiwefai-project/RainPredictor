@@ -16,6 +16,7 @@ This project implements a radar nowcasting model that:
 
 ## Documentation
 
+- [Installation guide](docs/install.md) — set up environments for training and prediction.
 - [Training guide](docs/train.md) — end-to-end training workflow and experiment notes.
 - [Inference guide](docs/predict.md) — minimal inference-only usage.
 - [Comparison tool](docs/compare.md) — visualize truth vs. predictions and compute metrics (`utils/compare.py`).
